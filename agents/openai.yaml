@@ -1,0 +1,4 @@
+interface:
+  display_name: "Video Subtitles"
+  short_description: "List, extract, and translate subtitles as SRT files"
+  default_prompt: "Use $video-subtitles to inspect, extract, or translate subtitles for these videos."
