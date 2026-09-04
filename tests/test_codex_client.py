@@ -29,11 +29,13 @@ class CodexClientTests(unittest.TestCase):
                 return subprocess.CompletedProcess(command, 0)
 
             with patch("codex_subtitles.codex_client.subprocess.run", side_effect=run):
-                summary = CodexClient(
+                client = CodexClient(
                     executable=str(executable),
                     work_dir=work,
                     log_path=root / "episode.log",
-                ).edit_glossary("Edit it", glossary=glossary, request_id="atlas-test")
+                )
+                summary = client.edit_glossary("Edit it", glossary=glossary, request_id="atlas-test")
+                client.enrich_glossary("Research it", glossary=glossary, request_id="atlas-enrichment-test")
 
             command = captured[0]
             self.assertEqual(summary, "没有需要更新的条目")
@@ -44,6 +46,12 @@ class CodexClientTests(unittest.TestCase):
             self.assertIn(str(glossary.resolve()), config)
             self.assertIn('extends=":read-only"', config)
             self.assertIn("network={enabled=false}", config)
+            self.assertIn('web_search="disabled"', config)
+            self.assertNotIn("--output-schema", captured[1])
+            research_config = " ".join(captured[1])
+            self.assertIn('web_search="live"', research_config)
+            self.assertIn("network={enabled=false}", research_config)
+            self.assertIn(str(glossary.resolve()), research_config)
 
 
 if __name__ == "__main__":

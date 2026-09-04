@@ -22,8 +22,8 @@ from .domain import (
     TranslationRun,
 )
 from .errors import ValidationIssue, WorkflowError
-from .curation import enqueue_curation, retry_pending
-from .glossary import compact_context, load_glossary, record_feedback, relevant_entries
+from .curation import enqueue_curation, ensure_episode_enrichment, retry_pending
+from .glossary import glossary_context, record_feedback
 from .language_profiles import DEFAULT_PROFILE, LanguageProfile
 from .prompts import iris_chunk_prompt, iris_local_retry_prompt
 from .protocol import (
@@ -215,14 +215,7 @@ class TranslationEngine:
         window_end = min(len(all_sources), core_end + CONTEXT_CUES)
         window = all_sources[window_start:window_end]
         source_window = source_window_jsonl(window, target_ids)
-        glossary_entries = load_glossary(self.state_dir, self.profile)
-        glossary = compact_context(
-            relevant_entries(
-                glossary_entries,
-                "\n".join(cue.text for cue in window),
-                self.profile,
-            )
-        )
+        glossary = glossary_context(self.state_dir, self.video, self.profile)
 
         raw_by_id: dict[int, IrisCue] | None = None
         validated: list[TranslationCue] | None = None
@@ -245,13 +238,7 @@ class TranslationEngine:
                     previous = _iris_json([raw_by_id[cue.id] for cue in retry_targets])
                     prompt = iris_local_retry_prompt(
                         retry_source,
-                        compact_context(
-                            relevant_entries(
-                                glossary_entries,
-                                "\n".join(cue.text for cue in retry_window),
-                                self.profile,
-                            )
-                        ),
+                        glossary_context(self.state_dir, self.video, self.profile),
                         reason=retry_reason or str(last_error),
                         previous=previous,
                         profile=self.profile,
@@ -391,18 +378,17 @@ class TranslationEngine:
             chunk_start = 1
             chunk_end = len(ranges)
         selected_ranges = list(enumerate(ranges, start=1))[chunk_start - 1 : chunk_end]
+        ensure_episode_enrichment(
+            self.client, self.state_dir, self.video, source,
+            log_path=self.log_path, profile=self.profile,
+        )
+        update_progress(self.state_dir, self.video, profile=self.profile, status="translating")
         all_records: list[TranslationCue] = []
         for chunk_index, (core_start, core_end) in selected_ranges:
             targets = source_cues[core_start:core_end]
             window_start = max(0, core_start - CONTEXT_CUES)
             window_end = min(len(source_cues), core_end + CONTEXT_CUES)
-            glossary = compact_context(
-                relevant_entries(
-                    load_glossary(self.state_dir, self.profile),
-                    "\n".join(cue.text for cue in source_cues[window_start:window_end]),
-                    self.profile,
-                )
-            )
+            glossary = glossary_context(self.state_dir, self.video, self.profile)
             glossary_digest = hashlib.sha256(glossary.encode("utf-8")).hexdigest()[:10]
             cache = cache_dir / f"chunk-{chunk_index:03d}.g{glossary_digest}.jsonl"
             records: list[TranslationCue] | None = None
@@ -475,13 +461,7 @@ class TranslationEngine:
                         request_id=request_id,
                         profile=self.profile,
                     )
-                    updated_glossary = compact_context(
-                        relevant_entries(
-                            load_glossary(self.state_dir, self.profile),
-                            "\n".join(cue.text for cue in source_cues[window_start:window_end]),
-                            self.profile,
-                        )
-                    )
+                    updated_glossary = glossary_context(self.state_dir, self.video, self.profile)
                     updated_digest = hashlib.sha256(
                         updated_glossary.encode("utf-8")
                     ).hexdigest()[:10]
@@ -589,6 +569,9 @@ def manual_retry(
     save_source_index(state_dir, video, source)
     source_cues = list(source.cues)
     targets = parse_retry_selector(selector, source_cues)
+    ensure_episode_enrichment(
+        client, state_dir, video, source, log_path=log_path, profile=profile,
+    )
     positions = _context_positions([cue.position for cue in targets], len(source_cues))
     window = [source_cues[position] for position in positions]
     target_ids = {cue.id for cue in targets}
@@ -600,13 +583,7 @@ def manual_retry(
     for attempt in range(1, MAX_TRANSLATION_ATTEMPTS + 1):
         prompt = iris_local_retry_prompt(
             source_window,
-            compact_context(
-                relevant_entries(
-                    load_glossary(state_dir, profile),
-                    "\n".join(cue.text for cue in window),
-                    profile,
-                )
-            ),
+            glossary_context(state_dir, video, profile),
             reason=reason if attempt == 1 else f"{reason}; prior retry failed: {last_error}",
             previous=previous,
             profile=profile,

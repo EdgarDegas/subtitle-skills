@@ -7,7 +7,7 @@ Read this reference when translation should continue after the initiating assist
 A normal `--stage-only` run has one long-lived Python runner. It processes requested videos sequentially and has at most one active model child at a time:
 
 - Iris runs as a `codex exec` child while translating a chunk.
-- Atlas runs as a `codex exec` child only after an Iris chunk has validated and terminology candidates need curation.
+- Atlas runs as a `codex exec` child before the episode's first Iris call for reference enrichment (`status="enriching"`), and after a validated Iris chunk when terminology candidates need curation.
 - A future episode in the same command is queued work, not a process that should already exist.
 
 Do not require Iris and Atlas to run simultaneously. “All processes are healthy” means the Python runner is alive and, whenever the episode log says a model call is active, the matching current `codex exec` descendant is also alive.

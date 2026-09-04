@@ -11,12 +11,21 @@ from difflib import unified_diff
 from pathlib import Path
 
 from .codex_client import CodexClient, append_log
-from .config import CURATION_VERSION, CURATOR_MODEL, CURATOR_NAME, RULESET_VERSION
-from .domain import GlossaryCandidate
+from .config import (
+    CURATION_VERSION,
+    CURATOR_MODEL,
+    CURATOR_NAME,
+    RULESET_VERSION,
+)
+from .domain import GlossaryCandidate, SourceDocument
 from .errors import WorkflowError
-from .glossary import ensure_glossary, updates_path, validate_glossary_edit
+from .glossary import (
+    ensure_glossary,
+    updates_path,
+    validate_glossary_edit,
+)
 from .language_profiles import DEFAULT_PROFILE, LanguageProfile
-from .prompts import atlas_prompt
+from .prompts import atlas_enrichment_prompt, atlas_prompt
 from .workspace import append_jsonl, atomic_write, read_json, title_dir, update_progress, write_json
 
 
@@ -78,7 +87,12 @@ def curation_status(
 ) -> dict[str, object]:
     jobs = jobs_for_episode(state_dir, video, fingerprint, profile=profile)
     pending = [job for _, job in jobs if job.get("status") != "complete"]
+    enrichment = [job for _, job in jobs if job.get("kind") == "episode-enrichment"]
     return {
+        "enrichment_status": (
+            "pending" if any(job.get("status") != "complete" for job in enrichment)
+            else "complete" if enrichment else "none"
+        ),
         "glossary_mode": "direct-edit",
         "glossary_profile": profile.id,
         "glossary_version": CURATION_VERSION,
@@ -98,13 +112,14 @@ def enqueue_curation(
     *,
     request_id: str,
     profile: LanguageProfile = DEFAULT_PROFILE,
+    episode: dict[str, object] | None = None,
 ) -> Path | None:
-    if not candidates:
+    if not candidates and episode is None:
         return None
     # Job identity belongs to the episode/request, not to individual cue IDs.
     payload = [asdict(candidate) for candidate in candidates]
     identity = json.dumps(
-        [fingerprint, RULESET_VERSION, profile.id, request_id, payload],
+        [fingerprint, RULESET_VERSION, profile.id, request_id, payload, episode],
         ensure_ascii=False, sort_keys=True,
     )
     digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:20]
@@ -119,11 +134,47 @@ def enqueue_curation(
             "profile": profile.id,
             "request_id": request_id,
             "candidates": payload,
+            **({"kind": "episode-enrichment", "episode": episode} if episode is not None else {}),
             "status": "pending",
             "attempts": 0,
             "last_error": None,
         })
     return path
+
+
+def ensure_episode_enrichment(
+    client: CodexClient,
+    state_dir: Path,
+    video: Path,
+    source: SourceDocument,
+    *,
+    log_path: Path,
+    profile: LanguageProfile = DEFAULT_PROFILE,
+) -> None:
+    """Run Atlas before Iris, reusing the existing durable curation jobs."""
+    path = enqueue_curation(
+        state_dir, video, source.fingerprint, [],
+        request_id="atlas-enrichment", profile=profile,
+        episode={
+            "title": title_dir(state_dir).name,
+            "video": video.name,
+            "source_cues": [{"id": cue.id, "text": cue.text} for cue in source.cues],
+        },
+    )
+    assert path is not None
+    if read_json(path).get("status") == "complete":
+        return
+    update_progress(state_dir, video, profile=profile, status="enriching")
+    retry_pending(
+        client, state_dir, video, source.fingerprint, log_path=log_path,
+        request_id="atlas-enrichment", profile=profile,
+    )
+    job = read_json(path)
+    if job.get("status") != "complete":
+        raise WorkflowError(
+            "Atlas episode enrichment is pending; Iris has not started. "
+            + str(job.get("last_error") or "another Atlas editor holds the title lock")
+        )
 
 
 def _edit_job(
@@ -151,23 +202,34 @@ def _edit_job(
     interrupted = False
     after = before
     try:
-        candidates = []
-        for item in job["candidates"]:
-            candidate = dict(item)
-            candidate.setdefault("target", candidate.get(profile.glossary_value_key, ""))
-            candidates.append(candidate)
-        summary = client.edit_glossary(
-            atlas_prompt(
-                str(glossary.resolve()),
-                candidates,
+        if job.get("kind") == "episode-enrichment":
+            prompt = atlas_enrichment_prompt(
+                str(glossary.resolve()), job["episode"],
                 retry_reason=str(reason) if reason else None,
                 profile=profile,
-            ),
+            )
+            edit = client.enrich_glossary
+        else:
+            candidates = []
+            for item in job["candidates"]:
+                candidate = dict(item)
+                candidate.setdefault("target", candidate.get(profile.glossary_value_key, ""))
+                candidates.append(candidate)
+            prompt = atlas_prompt(
+                str(glossary.resolve()), candidates,
+                retry_reason=str(reason) if reason else None, profile=profile,
+            )
+            edit = client.edit_glossary
+        summary = edit(
+            prompt,
             glossary=glossary,
             request_id=f"{job['request_id']}-{path.stem}-a{attempt:02d}",
         )
         after = glossary.read_text(encoding="utf-8")
-        validate_glossary_edit(before, after, profile)
+        validate_glossary_edit(
+            before, after, profile,
+            allow_merge=job.get("kind") == "episode-enrichment",
+        )
         job.update(status="complete", last_error=None, summary=summary)
     except (OSError, UnicodeError, WorkflowError, KeyboardInterrupt) as exc:
         interrupted = isinstance(exc, KeyboardInterrupt)

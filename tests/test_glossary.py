@@ -13,6 +13,21 @@ from codex_subtitles.glossary import (
 
 
 class GlossaryTests(unittest.TestCase):
+    def test_atlas_may_merge_into_notes_but_output_must_remain_valid(self) -> None:
+        before = (
+            "# Terms\n\n## People\n\n"
+            "| ID | 原文及别名 | 简中 | 备注 | 范围 |\n"
+            "|---|---|---|---|---|\n"
+            "| brothers | Jimmy; Chuck | Brothers | Source one | 按需 |\n"
+        )
+        merged = "# Terms\n\n## Background\nJimmy is Chuck's younger brother. Source one.\n"
+        validate_glossary_edit(before, merged, allow_merge=True)
+        validate_glossary_edit(merged, merged, allow_merge=True)
+        with self.assertRaises(WorkflowError):
+            validate_glossary_edit(before, "", allow_merge=True)
+        with self.assertRaises(WorkflowError):
+            validate_glossary_edit(before, before + "| malformed |\n", allow_merge=True)
+
     def test_direct_edit_may_add_alias_but_not_change_confirmed_chinese(self) -> None:
         before = (
             "# Show 术语表\n\n## 人物\n\n"

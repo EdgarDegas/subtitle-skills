@@ -6,11 +6,12 @@ import unittest
 from pathlib import Path
 
 from codex_subtitles.domain import GlossaryCandidate, IrisCue, IrisResponse
+from codex_subtitles.curation import ensure_episode_enrichment
 from codex_subtitles.errors import WorkflowError
 from codex_subtitles.glossary import ensure_glossary
 from codex_subtitles.protocol import build_source_document
-from codex_subtitles.workflow import TranslationEngine
-from codex_subtitles.workspace import ensure_layout
+from codex_subtitles.workflow import TranslationEngine, manual_retry
+from codex_subtitles.workspace import ensure_layout, read_json
 
 
 def make_srt(texts: list[str]) -> str:
@@ -34,6 +35,14 @@ def source_window(prompt: str) -> list[dict[str, object]]:
 class FakeClient:
     def __init__(self) -> None:
         self.prompts: list[str] = []
+        self.enrichment_calls = 0
+
+    def enrich_glossary(self, prompt: str, *, glossary: Path, request_id: str) -> str:
+        self.enrichment_calls += 1
+        if "Jimmy is younger; Chuck is older" not in glossary.read_text(encoding="utf-8"):
+            with glossary.open("a", encoding="utf-8") as handle:
+                handle.write("\n## Background\nJimmy is younger; Chuck is older. Test fixture.\n")
+        return "Shared context checked; nothing else needed"
 
     def translate(self, prompt: str, *, request_id: str) -> IrisResponse:
         self.prompts.append(prompt)
@@ -80,6 +89,69 @@ class AtlasFailingClient(FakeClient):
 
 
 class WorkflowTests(unittest.TestCase):
+    def test_episodes_reuse_one_fact_and_unchanged_research_can_complete(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_name:
+            state = Path(temp_name) / "Show" / "S01"
+            ensure_layout(state)
+            source = build_source_document(make_srt(["I am a bad brother"]))
+            client = FakeClient()
+            first = Path("Show S01E01.mkv")
+            second = Path("Show S01E02.mkv")
+            log = state / "logs" / "test.log"
+            ensure_episode_enrichment(client, state, first, source, log_path=log)
+            glossary = ensure_glossary(state)
+            before = glossary.read_bytes()
+            ensure_episode_enrichment(client, state, second, source, log_path=log)
+            self.assertEqual(glossary.read_bytes(), before)
+            self.assertEqual(client.enrichment_calls, 2)
+            ensure_episode_enrichment(client, state, first, source, log_path=log)
+            self.assertEqual(client.enrichment_calls, 2)
+
+    def test_failed_enrichment_rolls_back_and_blocks_iris_then_resumes(self) -> None:
+        class FailingResearch(FakeClient):
+            def enrich_glossary(self, prompt, **kwargs):
+                super().enrich_glossary(prompt, **kwargs)
+                raise WorkflowError("research interrupted after edit")
+
+        with tempfile.TemporaryDirectory() as temp_name:
+            state = Path(temp_name) / "Show" / "S01"
+            ensure_layout(state)
+            glossary = ensure_glossary(state)
+            original = glossary.read_text(encoding="utf-8")
+            video = Path("Show S01E01.mkv")
+            source = build_source_document(make_srt(["I am a bad brother"]))
+            failed = FailingResearch()
+            with self.assertRaisesRegex(WorkflowError, "Iris has not started"):
+                TranslationEngine(client=failed, state_dir=state, video=video,
+                                  log_path=state / "logs" / "test.log").translate(source)
+            self.assertEqual(failed.prompts, [])
+            self.assertEqual(glossary.read_text(encoding="utf-8"), original)
+            job = next((state / "glossary-jobs" / video.stem).glob("*.json"))
+            self.assertEqual(read_json(job)["status"], "pending")
+            resumed = FakeClient()
+            TranslationEngine(client=resumed, state_dir=state, video=video,
+                              log_path=state / "logs" / "test.log").translate(source)
+            self.assertEqual(read_json(job)["attempts"], 2)
+            self.assertEqual(read_json(job)["status"], "complete")
+            self.assertEqual(len(resumed.prompts), 1)
+
+    def test_cue_retry_enriches_first_and_research_repeats_for_changed_source(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_name:
+            state = Path(temp_name) / "Show" / "S01"
+            ensure_layout(state)
+            video = Path("Show S01E01.mkv")
+            client = FakeClient()
+            manual_retry(
+                build_source_document(make_srt(["I'm a bad brother"])), selector="1", reason="Fix relationship",
+                state_dir=state, video=video, client=client, log_path=state / "logs" / "test.log",
+            )
+            ensure_episode_enrichment(
+                client, state, video, build_source_document(make_srt(["You're a bad brother"])),
+                log_path=state / "logs" / "test.log",
+            )
+            self.assertEqual(client.enrichment_calls, 2)
+            self.assertTrue(all("Jimmy is younger; Chuck is older" in prompt for prompt in client.prompts))
+
     def test_atlas_failure_does_not_discard_or_repeat_validated_iris_chunk(self) -> None:
         with tempfile.TemporaryDirectory() as temp_name:
             root = Path(temp_name)
@@ -143,6 +215,9 @@ class WorkflowTests(unittest.TestCase):
             resumed_records = list(resumed_run.records)
             self.assertEqual(len(resumed_records), 125)
             self.assertEqual(resumed_client.prompts, [])
+            self.assertEqual(client.enrichment_calls, 1)
+            self.assertEqual(resumed_client.enrichment_calls, 0)
+            self.assertTrue(all("Jimmy is younger; Chuck is older" in prompt for prompt in client.prompts))
             self.assertTrue((state / "indexes" / f"{video.stem}.source.jsonl").is_file())
 
     def test_named_local_retry_repairs_only_failed_id_with_context(self) -> None:

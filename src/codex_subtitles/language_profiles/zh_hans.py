@@ -53,6 +53,7 @@ ZH_HANS = SimplifiedChineseProfile(
     ),
     pun_note_max_chars=32,
     translation_instructions="""- Translate into natural Simplified Chinese. Use standard Simplified Chinese translations for commonplace standalone first names, real countries, and well-known real cities.
+- English kinship words may omit distinctions Chinese requires. Use verified episode relationships and speaker/referent context for 哥哥/弟弟, 姐姐/妹妹, 堂/表 relatives and maternal/paternal relations. Never infer seniority from the word brother alone. If the relation or referent is unknown, use a natural neutral phrasing instead of guessing. A younger sibling saying 'I am a bad brother' refers to himself as 弟弟; accusing his older sibling refers to 哥哥.
 - Remove laughter fragments such as `Heh`, `Ha-ha`, `Ho-ho`, `呵呵`, and `哈哈`; delete the whole cue only when it contains no dialogue or lyrics.
 - Keep actual lyrics and visible on-screen words. Preserve an existing `{\\an8}` prefix exactly; add it to visible signs, papers, screens, labels, title cards, and messages after removing descriptive wrappers.
 - If an intentional pun cannot survive natural Chinese, keep the literal translation in `text` and add one `pun_note`. Explain only the lost relationship, use no source-language words, keep it to one line and at most 32 Chinese characters, and add no explanatory prefix such as `Pun:`, `双关`, `注`, or `译注`. Prefer `“芬兰语”与“完成”同音`.

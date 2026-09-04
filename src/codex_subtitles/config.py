@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 
-RULESET_VERSION = "2026-09-04.3"
+RULESET_VERSION = "2026-09-04.6"
 TRANSLATOR_NAME = "Iris"
 TRANSLATOR_MODEL = "gpt-5.6-luna"
 CURATOR_NAME = "Atlas"

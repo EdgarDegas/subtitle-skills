@@ -72,6 +72,16 @@ Use:
 
 Use temporary references such as `有人`, `有张照片`, `那个人`, or `里面` when Chinese front-loaded modifiers would reveal later information early.
 
+## Relationships and reference context
+
+Use Atlas's episode references to resolve distinctions English may omit, such as
+哥哥/弟弟, 姐姐/妹妹, 堂/表 relatives and maternal/paternal relations. Identify the
+speaker, addressee and referent before choosing the term. `Brother` alone does not
+establish age order; neither do actor ages or cast ordering. A younger sibling saying
+“I'm a bad brother” refers to himself as 弟弟, while accusing his older sibling refers
+to 哥哥. Where the relationship or referent is unresolved, use natural neutral wording.
+Background facts never authorize revealing a later identity or relationship early.
+
 ## Punctuation and readability
 
 - Remove a trailing Chinese `。` or single `.` from each subtitle line

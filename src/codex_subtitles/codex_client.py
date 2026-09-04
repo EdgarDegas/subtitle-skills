@@ -49,6 +49,7 @@ class CodexClient:
         request_id: str,
         schema: Path | None = None,
         editable_file: Path | None = None,
+        web_search: bool = False,
     ) -> str:
         response_path = self.work_dir / f"{request_id}.response.txt"
         response_path.unlink(missing_ok=True)
@@ -67,6 +68,8 @@ class CodexClient:
             "--output-last-message",
             str(response_path),
             "--json",
+            "-c",
+            'web_search="live"' if web_search else 'web_search="disabled"',
         ]
         if editable_file is None:
             command.extend(["--sandbox", "read-only"])
@@ -196,4 +199,16 @@ class CodexClient:
             model=CURATOR_MODEL,
             request_id=request_id,
             editable_file=glossary,
+        )
+
+    def enrich_glossary(
+        self, prompt: str, *, glossary: Path, request_id: str
+    ) -> str:
+        return self._invoke(
+            prompt,
+            role=CURATOR_NAME,
+            model=CURATOR_MODEL,
+            request_id=request_id,
+            editable_file=glossary,
+            web_search=True,
         )

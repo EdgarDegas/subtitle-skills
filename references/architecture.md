@@ -48,16 +48,24 @@ Default core size is 50 target cues, with up to 10 context cues before and after
 
 For example, one request may contain context `41..50`, target `51..100`, and context `101..110`. The next request owns `101..150`. Only target records are accepted and merged.
 
-Cache keys include the source fingerprint, ruleset, target-language profile, model policy, chunk size, context size, retry-patch digest, and relevant glossary digest. Cache contents also carry the full fingerprint, ruleset, and profile header. Missing profile fields in legacy documents mean the default `zh-hans` profile.
+Cache keys include the source fingerprint, ruleset, target-language profile, model policy, chunk size, context size, retry-patch digest, and glossary digest. Cache contents also carry the full fingerprint, ruleset, and profile header. Missing profile fields in legacy documents mean the default `zh-hans` profile.
 
-Persist validated Iris records before invoking Atlas. Atlas directly edits the shared
+Before Iris starts, run Atlas through the existing durable curation job mechanism.
+Atlas researches the full source and merges findings directly into the shared glossary;
+see [episode-enrichment.md](episode-enrichment.md). Iris receives the complete glossary,
+including background prose and notes, with the current filename. The complete glossary
+contributes to its cache digest. Atlas and Iris handle applicability and reveal timing
+through their prompts; Python handles Markdown structure, backups and retry state.
+
+Persist validated Iris records before invoking post-chunk Atlas. Atlas directly edits the shared
 `glossary.md`; Python does not generate or apply term actions. Give the Atlas process
 write access to that one file only, with the rest of the filesystem read-only and
-network disabled. Store the candidates and episode fingerprint as a resumable job in
+local shell networking disabled. Hosted web search is enabled only for pre-episode
+enrichment. Store the candidates and episode fingerprint as a resumable job in
 `glossary-jobs/`. A failed edit is restored from its exact pre-edit backup and leaves
 the job pending; it never invalidates the already saved Iris chunk.
 
-Use `--chunks START`, `--chunks START-END`, or `--chunks START-` to process an explicit inclusive one-based range. The absolute chunk number remains the cache owner and progress identity, even when the run starts after chunk 1. Persist `completed_chunks` as a sorted episode-wide list and keep the current `active_chunk_range` separate. A range run emits only a preview for that range. Run once without `--chunks` after the ranges finish to assemble the full source-ordered records and output from valid caches; if a relevant glossary digest changed, that final pass may refresh the affected chunk.
+Use `--chunks START`, `--chunks START-END`, or `--chunks START-` to process an explicit inclusive one-based range. The absolute chunk number remains the cache owner and progress identity, even when the run starts after chunk 1. Persist `completed_chunks` as a sorted episode-wide list and keep the current `active_chunk_range` separate. A range run emits only a preview for that range. Run once without `--chunks` after the ranges finish to assemble the full source-ordered records and output from valid caches; if a glossary digest changed, that final pass may refresh the affected chunk.
 
 ## Rendering
 
@@ -109,4 +117,4 @@ Television uses `<workspace>/<show>/<season>/`; all seasons share `<workspace>/<
 
 ## In-memory stages
 
-The source document, current chunk window, relevant glossary subset, Iris response, validation failures, and merged translation records exist in memory. Every expensive validated boundary is persisted: local source, source index, successful chunks, retry patches, terminology feedback, Atlas jobs and edit audits, final records, output, mapping, progress, and logs.
+The source document, current chunk window, shared glossary, Iris response, validation failures, and merged translation records exist in memory. Every expensive validated boundary is persisted: local source, source index, successful chunks, retry patches, terminology feedback, Atlas jobs and edit audits, final records, output, mapping, progress, and logs.

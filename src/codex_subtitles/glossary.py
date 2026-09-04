@@ -58,7 +58,7 @@ def ensure_glossary(
         atomic_write(
             path,
             f"# {title_dir(state_dir).name} {profile.native_name}术语表\n\n"
-            "所有条目默认已确认并立即生效。Atlas 只做增量维护，不自动清空本表。\n",
+            "译名保持一致，背景资料由 Atlas 增量核实与合并，不自动清空本表。\n",
         )
     return path
 
@@ -143,12 +143,16 @@ def validate_glossary_edit(
     before: str,
     after: str,
     profile: LanguageProfile = DEFAULT_PROFILE,
+    *,
+    allow_merge: bool = False,
 ) -> None:
     """Only structural/read-only safety checks; Atlas owns all terminology edits."""
     if not after.strip():
         raise WorkflowError("Atlas left an empty glossary")
     old_entries = parse_glossary(before, profile)
     new_entries = {entry.key: entry for entry in parse_glossary(after, profile)}
+    if allow_merge:
+        return  # Atlas owns semantic merging; Markdown must still parse correctly.
     for old in old_entries:
         new = new_entries.get(old.key)
         if new is None:
@@ -165,27 +169,13 @@ def _alias_occurs(alias: str, text: str) -> bool:
     return alias.casefold() in text.casefold()
 
 
-def relevant_entries(
-    entries: list[GlossaryEntry],
-    source_text: str,
-    profile: LanguageProfile = DEFAULT_PROFILE,
-) -> list[GlossaryEntry]:
-    return [
-        entry
-        for entry in entries
-        if entry.scope == profile.global_scope
-        or any(_alias_occurs(alias, source_text) for alias in entry.aliases)
-    ]
-
-
-def compact_context(entries: list[GlossaryEntry]) -> str:
-    if not entries:
-        return "(none)"
-    return "\n".join(
-        f"{entry.key}: {'; '.join(entry.aliases)} → {entry.target}"
-        + (f"（{entry.notes}）" if entry.notes else "")
-        for entry in entries
-    )
+def glossary_context(
+    state_dir: Path, video: Path, profile: LanguageProfile = DEFAULT_PROFILE
+) -> str:
+    # Include the notes even when a chunk contains only pronouns.
+    return f"Current episode: {video.name}\n" + ensure_glossary(
+        state_dir, profile
+    ).read_text(encoding="utf-8")
 
 
 def record_feedback(
