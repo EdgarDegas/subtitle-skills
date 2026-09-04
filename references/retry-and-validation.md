@@ -10,7 +10,6 @@ Appealable translation checks:
 
 - `pun`
 - `foreign text`
-- `laughter`
 - `reveal order`
 - `speaker label`
 - `terminology`
@@ -30,9 +29,9 @@ Protocol checks protect safe mapping and rendering and therefore cannot be skipp
 
 Require every target integer ID exactly once. Reject context IDs, unknown IDs, omissions, and duplicates. Rebuild timestamps, source text, and original SRT numbers from the local source index; Iris never controls them.
 
-Validate `drop=true` only for a source cue that is purely non-speech and require empty `text` and `additions`. Validate addition kinds through a whitelist. A `pun_note` must be short, Chinese-only, and absent from an already top-positioned main cue.
+Iris owns the semantic decision that a cue is purely non-speech. Do not enumerate source-language sounds or reject a deletion based on source wording. Deterministically require every `drop=true` record to have empty `text` and `additions`. Validate addition kinds through a whitelist. A `pun_note` must be short, Chinese-only, and absent from an already top-positioned main cue.
 
-Run residue checks for speaker labels, laughter, and probable foreign text. Do not run a separate duplicate semantic-review model pass.
+Run residue checks for speaker labels and probable foreign text. Laughter removal and omission of explanatory prefixes on pun notes are Iris prompt responsibilities, not deterministic checks. Do not run a separate duplicate semantic-review model pass.
 
 ## Automatic retry
 

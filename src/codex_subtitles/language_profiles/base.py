@@ -44,10 +44,6 @@ class LanguageProfile(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def laughter_residue(self, text: str) -> str | None:
-        raise NotImplementedError
-
-    @abstractmethod
     def validate_pun_note(self, text: str) -> str | None:
         raise NotImplementedError
 

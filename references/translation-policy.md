@@ -21,7 +21,7 @@ When an intentional second meaning cannot survive natural Chinese, keep the ordi
 - explains only the lost relationship needed to understand the line or reaction
 - contains no source-language words
 - is one line and at most 32 Chinese characters
-- never starts with `双关`, `注`, `译注`, or another label
+- never starts with `Pun:`, `双关`, `注`, `译注`, or another explanatory label
 - remains slightly longer than the main cue for reading time
 
 For `Finnish` / `finish`, use:
@@ -30,7 +30,7 @@ For `Finnish` / `finish`, use:
 {\an8}“芬兰语”与“完成”同音
 ```
 
-Do not invent a confusing Chinese pun and do not teach the source language.
+Do not invent a confusing Chinese pun and do not teach the source language. Iris handles laughter removal and omission of explanatory prefixes; these are prompt instructions, not word-list validators.
 
 ## Information-reveal order
 

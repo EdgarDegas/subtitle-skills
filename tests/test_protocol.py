@@ -157,17 +157,41 @@ class ProtocolTests(unittest.TestCase):
             )
         self.assertEqual(duplicate.exception.check, "cue id")
 
-    def test_drop_and_multi_check_appeal(self) -> None:
-        sounds = list(build_source_document(make_srt(["[LAUGHS]"])).cues)
-        dropped = validate_iris_cues(sounds, [IrisCue(1, "", True)], retry=False)
-        self.assertTrue(dropped[0].drop)
+    def test_drop_trusts_iris_and_only_enforces_structure(self) -> None:
+        sounds = list(
+            build_source_document(
+                make_srt(
+                    [
+                        "[KNIFE SLICING AND CHOPPING]",
+                        "[MAN HUMMING]",
+                        "[INAUDIBLE DIALOGUE]",
+                        "[IN SPANISH]",
+                    ]
+                )
+            ).cues
+        )
+        dropped = validate_iris_cues(
+            sounds,
+            [IrisCue(cue.id, "", True) for cue in sounds],
+            retry=False,
+        )
+        self.assertTrue(all(record.drop for record in dropped))
 
+        with self.assertRaises(ValidationIssue) as invalid:
+            validate_iris_cues(
+                [sounds[0]],
+                [IrisCue(sounds[0].id, "不应保留的文本", True)],
+                retry=False,
+            )
+        self.assertEqual(invalid.exception.check, "cue deletion")
+
+    def test_multi_check_appeal(self) -> None:
         dialogue = list(build_source_document(make_srt(["MAN: Heh, Chào cô"])).cues)
         appealed = IrisCue(
             1,
             "MAN: 哈哈 Chào cô",
             False,
-            skip_checks=("speaker label", "laughter", "foreign text"),
+            skip_checks=("speaker label", "foreign text"),
         )
         with self.assertRaises(ValidationIssue) as initial:
             validate_iris_cues(dialogue, [appealed], retry=False)
@@ -175,8 +199,28 @@ class ProtocolTests(unittest.TestCase):
         result = validate_iris_cues(dialogue, [appealed], retry=True)
         self.assertEqual(
             result[0].skip_checks,
-            ("foreign text", "laughter", "speaker label"),
+            ("foreign text", "speaker label"),
         )
+
+    def test_laughter_wording_is_not_mechanically_rejected_or_removed(self) -> None:
+        cues = list(build_source_document(make_srt(["Heh", "Say laughter"])).cues)
+        result = validate_iris_cues(
+            cues,
+            [IrisCue(1, "哈哈，好的", False), IrisCue(2, "laughter", False)],
+            retry=False,
+        )
+        self.assertEqual([record.text for record in result], ["哈哈，好的", "laughter"])
+
+    def test_pun_note_prefixes_are_prompt_only(self) -> None:
+        cues = list(build_source_document(make_srt(["Finnish?"])).cues)
+        for text in ("注意两个词的读音", "双关：两个词同音", "译注：两个词同音"):
+            with self.subTest(text=text):
+                result = validate_iris_cues(
+                    cues,
+                    [IrisCue(1, "芬兰语？", False, additions=(Addition("pun_note", text),))],
+                    retry=False,
+                )
+                self.assertEqual(result[0].additions[0].text, text)
 
     def test_pun_is_a_validated_addition(self) -> None:
         cues = list(build_source_document(make_srt(["Finnish?"])).cues)

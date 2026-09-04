@@ -19,26 +19,6 @@ from .srt import normalize_text, parse_srt
 
 
 SPEAKER_LABEL = re.compile(r"^(?:[-–—]\s*)?[A-Z][A-Z0-9 .&'’\-]{0,36}(?::|：)\s*")
-SOURCE_LAUGHTER = re.compile(
-    r"(?:\b(?:heh(?:[ -]?heh)*|ha(?:[ -]?ha)+|ho(?:[ -]?ho)+|"
-    r"chuckles?|chuckling|laughs?|laughter|giggles?)\b)",
-    re.IGNORECASE,
-)
-AUDIO_DESCRIPTION = re.compile(
-    r"\b(?:applause|applauding|clapping|footsteps?|steps approaching|"
-    r"chuckles?|chuckling|laughs?|laughing|laughter|giggles?|"
-    r"sighs?|sighing|gasps?|gasping|pants?|panting|groans?|grunts?|gulps?|"
-    r"screams?|screaming|screeches?|screeching|sobs?|sobbing|cries|crying|"
-    r"sniffles?|coughs?|coughing|sneezes?|clears? (?:his |her |their )?throat|"
-    r"door (?:opens?|closes?|slams?)|phone (?:rings?|ringing)|ringing|"
-    r"buzz(?:es|ing)?|beeps?|beeping|bleeps?|bleeping|whirs?|whirring|alarm|"
-    r"gunshots?|explosion|thunder|indistinct chatter|murmuring|speaking \w+|"
-    r"speaks?\s+in\s+\w+|speaking\s+in\s+\w+|music(?: plays?| playing)?|"
-    r"dramatic music|ominous music|psst+|shh+)\b",
-    re.IGNORECASE,
-)
-
-
 def _canonical_source(cues: Iterable[SourceCue]) -> str:
     return "\n".join(
         json.dumps(
@@ -122,19 +102,6 @@ def source_window_jsonl(window: Iterable[SourceCue], target_ids: set[int]) -> st
         )
         for cue in window
     )
-
-
-def source_is_sound_only(text: str) -> bool:
-    plain = re.sub(r"<[^>]+>|\{\\[^}]+\}", "", text)
-    if re.fullmatch(r"\s*(?:\[[^\]]+\]|\([^()]+\))\s*", plain, re.DOTALL):
-        if AUDIO_DESCRIPTION.search(plain):
-            return True
-    plain = plain.replace("♪", " ").strip()
-    plain = SPEAKER_LABEL.sub("", plain)
-    plain = re.sub(r"[\[\](){}]", " ", plain)
-    plain = AUDIO_DESCRIPTION.sub(" ", plain)
-    plain = SOURCE_LAUGHTER.sub(" ", plain)
-    return not re.sub(r"[\W_]+", "", plain, flags=re.UNICODE)
 
 
 def foreign_text_residue(
@@ -227,13 +194,6 @@ def _validate_one(
                 cue_ids=(source.id,),
                 skippable=False,
             )
-        if not source_is_sound_only(source.text):
-            raise ValidationIssue(
-                "cue deletion",
-                f"cue {source.id} is not purely non-speech sound",
-                cue_ids=(source.id,),
-                skippable=False,
-            )
         text = ""
         additions: tuple[Addition, ...] = ()
     else:
@@ -258,20 +218,6 @@ def _validate_one(
                         f"cue {source.id} retains a CC speaker label: {line.strip()[:48]}",
                         cue_ids=(source.id,),
                     )
-        if "laughter" not in skipped:
-            laughter = profile.laughter_residue(check_text)
-            if laughter:
-                raise ValidationIssue(
-                    "laughter",
-                    f"cue {source.id} retains laughter: {laughter}",
-                    cue_ids=(source.id,),
-                )
-            if source_is_sound_only(source.text):
-                raise ValidationIssue(
-                    "laughter",
-                    f"pure sound cue {source.id} must use drop=true",
-                    cue_ids=(source.id,),
-                )
         if "foreign text" not in skipped:
             residue = foreign_text_residue(check_text, profile)
             if residue:

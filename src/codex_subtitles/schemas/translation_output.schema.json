@@ -26,7 +26,7 @@
             "type": "array",
             "items": {
               "type": "string",
-              "enum": ["foreign text", "laughter", "pun", "reveal order", "speaker label", "terminology"]
+              "enum": ["foreign text", "pun", "reveal order", "speaker label", "terminology"]
             }
           }
         },

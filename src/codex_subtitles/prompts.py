@@ -23,6 +23,7 @@ Protocol:
 - Return every `role:"target"` integer ID exactly once and in source order; never return a context ID. IDs are episode cue ordinals and the sole alignment authority.
 - Ordinary dialogue: `drop=false`, translated subtitle in `text`, empty `additions`, empty `skip_checks`.
 - Pure non-speech sound: `drop=true`, empty `text`, empty `additions`. Never drop dialogue or lyrics.
+- Your semantic decision to use `drop=true` is authoritative; the script does not classify sounds with a keyword list.
 - Never put cue numbers, timestamps, protocol markers, explanations, Markdown, or bilingual duplication in `text`.
 - Keep `skip_checks` empty unless this request explicitly says it is a retry.
 

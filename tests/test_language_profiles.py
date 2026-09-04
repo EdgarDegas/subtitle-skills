@@ -84,9 +84,6 @@ class LanguageProfileTests(unittest.TestCase):
             def translated_speaker_label(self, text: str) -> bool:
                 return False
 
-            def laughter_residue(self, text: str) -> str | None:
-                return None
-
             def validate_pun_note(self, text: str) -> str | None:
                 return None
 
