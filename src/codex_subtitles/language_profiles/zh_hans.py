@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import re
-import unicodedata
 
 from .base import LanguageProfile
 
@@ -17,35 +16,6 @@ def _normalize_text(text: str) -> str:
     return "\n".join(lines).strip()
 
 
-def _is_latin_word(token: str) -> bool:
-    letters = [character for character in token if character.isalpha()]
-    return bool(letters) and all(
-        "LATIN" in unicodedata.name(character, "") for character in letters
-    )
-
-
-def _foreign_text_residue(text: str) -> str | None:
-    plain = re.sub(r"\{\\[^}]+\}|<[^>]+>", " ", text)
-    candidates = [
-        token
-        for token in re.findall(r"[^\W\d_]+(?:['’\-][^\W\d_]+)*", plain, re.UNICODE)
-        if _is_latin_word(token)
-    ]
-    meaningful: list[str] = []
-    for token in candidates:
-        letters = "".join(character for character in token if character.isalpha())
-        if len(letters) <= 1 or (letters.isupper() and len(letters) <= 6):
-            continue
-        meaningful.append(token)
-    if len(meaningful) >= 2:
-        return " ".join(meaningful[:4])
-    if meaningful and any(
-        ord(character) > 127 for character in meaningful[0] if character.isalpha()
-    ):
-        return meaningful[0]
-    return None
-
-
 _TRANSLATED_SPEAKER_LABEL = re.compile(
     r"^(?:[-–—]\s*)?[^，,。.!！?？：:\n]{1,16}(?::|：)\s*"
 )
@@ -54,9 +24,6 @@ _TRANSLATED_SPEAKER_LABEL = re.compile(
 class SimplifiedChineseProfile(LanguageProfile):
     def normalize_text(self, text: str) -> str:
         return _normalize_text(text)
-
-    def foreign_text_residue(self, text: str) -> str | None:
-        return _foreign_text_residue(text)
 
     def translated_speaker_label(self, text: str) -> bool:
         return bool(_TRANSLATED_SPEAKER_LABEL.match(text))

@@ -36,10 +36,6 @@ class LanguageProfile(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def foreign_text_residue(self, text: str) -> str | None:
-        raise NotImplementedError
-
-    @abstractmethod
     def translated_speaker_label(self, text: str) -> bool:
         raise NotImplementedError
 

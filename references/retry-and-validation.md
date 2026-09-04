@@ -9,7 +9,6 @@ Every failure has one stable short name.
 Appealable translation checks:
 
 - `pun`
-- `foreign text`
 - `reveal order`
 - `speaker label`
 - `terminology`
@@ -31,7 +30,7 @@ Require every target integer ID exactly once. Reject context IDs, unknown IDs, o
 
 Iris owns the semantic decision that a cue is purely non-speech. Do not enumerate source-language sounds or reject a deletion based on source wording. Deterministically require every `drop=true` record to have empty `text` and `additions`. Validate addition kinds through a whitelist. A `pun_note` must be short, Chinese-only, and absent from an already top-positioned main cue.
 
-Run residue checks for speaker labels and probable foreign text. Laughter removal and omission of explanatory prefixes on pun notes are Iris prompt responsibilities, not deterministic checks. Do not run a separate duplicate semantic-review model pass.
+Run the speaker-label residue check. Translation completeness, laughter removal, and omission of explanatory prefixes on pun notes are Iris prompt responsibilities, not deterministic checks. Do not run a separate duplicate semantic-review model pass.
 
 ## Automatic retry
 

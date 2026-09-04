@@ -78,9 +78,6 @@ class LanguageProfileTests(unittest.TestCase):
             def normalize_text(self, text: str) -> str:
                 return text.strip().upper()
 
-            def foreign_text_residue(self, text: str) -> str | None:
-                return None
-
             def translated_speaker_label(self, text: str) -> bool:
                 return False
 

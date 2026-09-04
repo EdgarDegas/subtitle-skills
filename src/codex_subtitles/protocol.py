@@ -104,12 +104,6 @@ def source_window_jsonl(window: Iterable[SourceCue], target_ids: set[int]) -> st
     )
 
 
-def foreign_text_residue(
-    text: str, profile: LanguageProfile = DEFAULT_PROFILE
-) -> str | None:
-    return profile.foreign_text_residue(text)
-
-
 def _validate_additions(
     source: SourceCue,
     additions: tuple[Addition, ...],
@@ -218,14 +212,6 @@ def _validate_one(
                         f"cue {source.id} retains a CC speaker label: {line.strip()[:48]}",
                         cue_ids=(source.id,),
                     )
-        if "foreign text" not in skipped:
-            residue = foreign_text_residue(check_text, profile)
-            if residue:
-                raise ValidationIssue(
-                    "foreign text",
-                    f"cue {source.id} retains probable foreign text: {residue}",
-                    cue_ids=(source.id,),
-                )
         if source.text.lstrip().startswith(TOP_POSITION_TAG):
             text = TOP_POSITION_TAG + re.sub(r"^\{\\an8\}\s*", "", text.lstrip())
     return TranslationCue(

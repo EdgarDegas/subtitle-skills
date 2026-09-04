@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 
-RULESET_VERSION = "2026-09-04.2"
+RULESET_VERSION = "2026-09-04.3"
 TRANSLATOR_NAME = "Iris"
 TRANSLATOR_MODEL = "gpt-5.6-luna"
 CURATOR_NAME = "Atlas"
@@ -27,7 +27,6 @@ SUBTITLE_EXTENSIONS = frozenset({".ass", ".srt", ".ssa", ".vtt"})
 
 SKIPPABLE_CHECKS = frozenset(
     {
-        "foreign text",
         "pun",
         "reveal order",
         "speaker label",

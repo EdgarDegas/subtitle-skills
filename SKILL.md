@@ -12,7 +12,7 @@ This directory is the only code source. Run `python3 <skill-dir>/main.py` direct
 
 ## Target-language profiles
 
-Target-language behavior lives in `src/codex_subtitles/language_profiles/`, not scattered across the workflow. The only registered profile is currently `zh-hans`, and it remains the default. It owns the target name and tag, output filename, glossary target column and scopes, existing-target markers, Iris and Atlas language instructions, punctuation normalization, translated speaker-label detection, foreign-text residue checks, and pun-note constraints.
+Target-language behavior lives in `src/codex_subtitles/language_profiles/`, not scattered across the workflow. The only registered profile is currently `zh-hans`, and it remains the default. It owns the target name and tag, output filename, glossary target column and scopes, existing-target markers, Iris and Atlas language instructions, punctuation normalization, translated speaker-label detection, and pun-note constraints.
 
 Use `--profile zh-hans` to make the selection explicit; omitting it produces exactly the same paths and behavior as before this refactor. Translation records, progress, caches, glossary jobs, and output paths carry or derive the profile identity. A future profile must register a complete implementation rather than adding language conditionals to generic modules. Read [references/language-profiles.md](references/language-profiles.md) before adding or changing one.
 

@@ -191,7 +191,7 @@ class ProtocolTests(unittest.TestCase):
             1,
             "MAN: 哈哈 Chào cô",
             False,
-            skip_checks=("speaker label", "foreign text"),
+            skip_checks=("speaker label", "terminology"),
         )
         with self.assertRaises(ValidationIssue) as initial:
             validate_iris_cues(dialogue, [appealed], retry=False)
@@ -199,8 +199,32 @@ class ProtocolTests(unittest.TestCase):
         result = validate_iris_cues(dialogue, [appealed], retry=True)
         self.assertEqual(
             result[0].skip_checks,
-            ("foreign text", "speaker label"),
+            ("speaker label", "terminology"),
         )
+
+    def test_foreign_text_does_not_trigger_validation_or_require_an_appeal(self) -> None:
+        texts = ["Hello world", "Los Angeles", "café", "你好 Hello world"]
+        cues = list(build_source_document(make_srt(texts)).cues)
+        candidates = [IrisCue(cue.id, text, False) for cue, text in zip(cues, texts)]
+        for retry in (False, True):
+            with self.subTest(retry=retry):
+                result = validate_iris_cues(cues, candidates, retry=retry)
+                self.assertEqual([record.text for record in result], texts)
+                self.assertTrue(all(not record.skip_checks for record in result))
+
+    def test_speaker_label_still_rejects_without_an_appeal(self) -> None:
+        cues = list(build_source_document(make_srt(["MAN: Hello"])).cues)
+        with self.assertRaises(ValidationIssue) as invalid:
+            validate_iris_cues(cues, [IrisCue(1, "男人：你好", False)], retry=False)
+        self.assertEqual(invalid.exception.check, "speaker label")
+
+    def test_schema_appeal_names_match_active_checks(self) -> None:
+        from codex_subtitles.config import SKIPPABLE_CHECKS, TRANSLATION_SCHEMA
+
+        schema = json.loads(TRANSLATION_SCHEMA.read_text(encoding="utf-8"))
+        names = schema["properties"]["cues"]["items"]["properties"]["skip_checks"]["items"]["enum"]
+        self.assertEqual(set(names), SKIPPABLE_CHECKS)
+        self.assertNotIn("foreign text", names)
 
     def test_laughter_wording_is_not_mechanically_rejected_or_removed(self) -> None:
         cues = list(build_source_document(make_srt(["Heh", "Say laughter"])).cues)
