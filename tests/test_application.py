@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import unittest
 import tempfile
 from pathlib import Path
@@ -10,10 +11,13 @@ from codex_subtitles.application import (
     _compatible_completed_chunks,
     _next_chunk,
     process_video,
+    rerender_saved_output,
 )
 from codex_subtitles.config import RULESET_VERSION
 from codex_subtitles.domain import IrisCue, IrisResponse
+from codex_subtitles.errors import WorkflowError
 from codex_subtitles.language_profiles import DEFAULT_PROFILE
+from codex_subtitles.media import destination_path
 from codex_subtitles.srt import parse_srt
 from codex_subtitles.workspace import (
     collection_dir,
@@ -21,6 +25,9 @@ from codex_subtitles.workspace import (
     output_path,
     progress_path,
     read_json,
+    records_path,
+    retry_path,
+    write_json,
 )
 
 
@@ -49,12 +56,29 @@ class ApplicationTests(unittest.TestCase):
                 process_video(video, RunOptions(workspace_root=workspace, stage_only=True, chunk_cues=1))
                 cache_bytes = {path: path.read_bytes() for path in (state / "chunks").rglob("*.jsonl")}
                 original = parse_srt(output_path(state, video).read_text(encoding="utf-8"))
+                process_video(video, RunOptions(workspace_root=workspace, sync_only=True))
+                published = destination_path(video).read_bytes()
 
                 result = process_video(video, RunOptions(
                     workspace_root=workspace, retry_cues="2", retry_reason="Fix cue 2",
                 ))
                 self.assertTrue(result.startswith("RETRY READY "))
                 self.assertEqual(client.translate.call_count, 4)
+                progress = read_json(progress_path(state, video))
+                self.assertTrue(progress["assembly_required"])
+                for flag in ("output_ready", "records_ready", "synced"):
+                    self.assertFalse(progress[flag])
+                for mode in ("sync_only", "normalize_only", "stage_only"):
+                    with self.subTest(mode=mode), self.assertRaisesRegex(WorkflowError, "rebuild"):
+                        process_video(video, RunOptions(
+                            workspace_root=workspace, **{mode: True},
+                        ))
+                with self.assertRaisesRegex(WorkflowError, "rebuild"):
+                    rerender_saved_output(video, workspace)
+                self.assertEqual(destination_path(video).read_bytes(), published)
+                self.assertEqual(
+                    parse_srt(output_path(state, video).read_text(encoding="utf-8")), original,
+                )
                 client.translate.reset_mock(side_effect=True)
                 client.translate.side_effect = AssertionError("completed chunks must not be translated again")
                 client.enrich_glossary.reset_mock()
@@ -71,6 +95,133 @@ class ApplicationTests(unittest.TestCase):
                 self.assertEqual(
                     {path: path.read_bytes() for path in (state / "chunks").rglob("*.jsonl")}, cache_bytes,
                 )
+                result = process_video(video, RunOptions(
+                    workspace_root=workspace, sync_only=True, overwrite=True,
+                ))
+                self.assertTrue(result.startswith("SYNCED "))
+                self.assertEqual(
+                    destination_path(video).read_bytes(), output_path(state, video).read_bytes(),
+                )
+                client.translate.assert_not_called()
+
+    def test_sync_detects_edited_removed_and_untracked_corrections(self) -> None:
+        for change in ("edit", "clear", "delete", "legacy", "missing_records"):
+            with self.subTest(change=change), tempfile.TemporaryDirectory() as temp_name:
+                root = Path(temp_name)
+                video = root / "media" / "Movie.mkv"
+                workspace = root / "workspace"
+                state = collection_dir(video, workspace)
+                ensure_layout(state)
+                (state / "sources" / "Movie.en.srt").write_text(
+                    "1\n00:00:01,000 --> 00:00:02,000\nHello\n", encoding="utf-8",
+                )
+                with patch("codex_subtitles.application.CodexClient") as client_type:
+                    client = client_type.return_value
+                    client.enrich_glossary.return_value = "No glossary changes needed"
+                    client.translate.side_effect = [
+                        IrisResponse((IrisCue(1, "你好", False),)),
+                        IrisResponse((IrisCue(1, "您好", False),)),
+                    ]
+                    process_video(video, RunOptions(workspace_root=workspace, stage_only=True))
+                    process_video(video, RunOptions(
+                        workspace_root=workspace, retry_cues="1", retry_reason="Be polite",
+                    ))
+                    process_video(video, RunOptions(
+                        workspace_root=workspace, stage_only=True, overwrite=True,
+                    ))
+                    process_video(video, RunOptions(workspace_root=workspace, sync_only=True))
+                    staged = output_path(state, video).read_bytes()
+                    published = destination_path(video).read_bytes()
+                    patch_file = retry_path(state, video)
+                    patches = read_json(patch_file)
+                    if change == "edit":
+                        patches["patches"][0]["text"] = "大家好"
+                        write_json(patch_file, patches)
+                    elif change == "clear":
+                        patches["patches"] = []
+                        write_json(patch_file, patches)
+                    elif change == "delete":
+                        patch_file.unlink()
+                    elif change == "legacy":
+                        record_file = records_path(state, video)
+                        lines = record_file.read_text(encoding="utf-8").splitlines()
+                        header = json.loads(lines[0])
+                        header.pop("retry_fingerprint")
+                        lines[0] = json.dumps(header)
+                        record_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+                    else:
+                        records_path(state, video).unlink()
+                    self.assertTrue(read_json(progress_path(state, video))["synced"])
+                    with self.assertRaisesRegex(WorkflowError, "rebuild"):
+                        process_video(video, RunOptions(
+                            workspace_root=workspace, sync_only=True, overwrite=True,
+                        ))
+                    self.assertEqual(output_path(state, video).read_bytes(), staged)
+                    self.assertEqual(destination_path(video).read_bytes(), published)
+                    self.assertFalse(read_json(progress_path(state, video))["synced"])
+                    # Reassembly must recover from removals as well as additions.
+                    client.translate.reset_mock(side_effect=True)
+                    client.translate.side_effect = AssertionError("base cache must remain reusable")
+                    process_video(video, RunOptions(
+                        workspace_root=workspace, stage_only=True, overwrite=True,
+                    ))
+                    process_video(video, RunOptions(
+                        workspace_root=workspace, sync_only=True, overwrite=True,
+                    ))
+                    expected = "大家好" if change == "edit" else (
+                        "你好" if change in ("clear", "delete") else "您好"
+                    )
+                    self.assertEqual(
+                        parse_srt(destination_path(video).read_text(encoding="utf-8"))[0].text,
+                        expected,
+                    )
+                    client.translate.assert_not_called()
+
+    def test_old_records_cannot_be_skipped_after_progress_updates(self) -> None:
+        for progress_version in ("older-ruleset", RULESET_VERSION):
+            with self.subTest(progress_version=progress_version), tempfile.TemporaryDirectory() as temp_name:
+                root = Path(temp_name)
+                video = root / "media" / "Movie.mkv"
+                workspace = root / "workspace"
+                state = collection_dir(video, workspace)
+                ensure_layout(state)
+                (state / "sources" / "Movie.en.srt").write_text(
+                    "1\n00:00:01,000 --> 00:00:02,000\nHello\n", encoding="utf-8",
+                )
+                with patch("codex_subtitles.application.CodexClient") as client_type:
+                    client = client_type.return_value
+                    client.enrich_glossary.return_value = "No glossary changes needed"
+                    client.translate.return_value = IrisResponse((IrisCue(1, "你好", False),))
+                    process_video(video, RunOptions(workspace_root=workspace, stage_only=True))
+                    record_file = records_path(state, video)
+                    record_file.write_text(
+                        record_file.read_text(encoding="utf-8").replace(RULESET_VERSION, "older-ruleset"),
+                        encoding="utf-8",
+                    )
+                    progress = read_json(progress_path(state, video))
+                    progress["ruleset_version"] = progress_version
+                    progress["chunk_ruleset_version"] = "older-ruleset"
+                    write_json(progress_path(state, video), progress)
+                    process_video(video, RunOptions(
+                        workspace_root=workspace, source_only=True, overwrite=True,
+                    ))
+                    self.assertEqual(
+                        read_json(progress_path(state, video))["ruleset_version"], progress_version,
+                    )
+                    for mode in ("stage_only", "normalize_only", "sync_only"):
+                        with self.subTest(mode=mode), self.assertRaisesRegex(WorkflowError, "stale ruleset"):
+                            process_video(video, RunOptions(workspace_root=workspace, **{mode: True}))
+                    client.translate.reset_mock()
+                    process_video(video, RunOptions(
+                        workspace_root=workspace, stage_only=True, overwrite=True,
+                    ))
+                    self.assertEqual(
+                        read_json(progress_path(state, video))["ruleset_version"], RULESET_VERSION,
+                    )
+                    self.assertTrue(process_video(
+                        video, RunOptions(workspace_root=workspace, stage_only=True),
+                    ).startswith("SKIP "))
+                    client.translate.assert_not_called()
 
     def test_resume_later_chunks_writes_preview_then_assembles_cached_episode(self) -> None:
         with tempfile.TemporaryDirectory() as temp_name:
@@ -240,6 +391,28 @@ class ApplicationTests(unittest.TestCase):
             ),
             {1, 2, 3},
         )
+
+    def test_chunk_progress_uses_its_own_ruleset(self) -> None:
+        for chunk_version, output_version, expected in (
+            (RULESET_VERSION, "older-ruleset", {1, 2}),
+            ("older-ruleset", RULESET_VERSION, set()),
+        ):
+            with self.subTest(chunk_version=chunk_version, output_version=output_version):
+                self.assertEqual(
+                    _compatible_completed_chunks(
+                        {
+                            "ruleset_version": output_version,
+                            "chunk_ruleset_version": chunk_version,
+                            "source_fingerprint": "source-a",
+                            "completed_chunks": [1, 2],
+                            "chunk_cues": 50,
+                        },
+                        source_fingerprint="source-a",
+                        chunks_total=3,
+                        chunk_cues=50,
+                    ),
+                    expected,
+                )
 
 
 if __name__ == "__main__":

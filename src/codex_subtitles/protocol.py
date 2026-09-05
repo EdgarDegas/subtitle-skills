@@ -283,6 +283,8 @@ def serialize_translation_document(
     source_fingerprint: str,
     records: Iterable[TranslationCue],
     profile: LanguageProfile = DEFAULT_PROFILE,
+    *,
+    retry_fingerprint: str | None = None,
 ) -> str:
     values = list(records)
     header = {
@@ -293,6 +295,8 @@ def serialize_translation_document(
         "source_fingerprint": source_fingerprint,
         "cue_count": len(values),
     }
+    if retry_fingerprint is not None:
+        header["retry_fingerprint"] = retry_fingerprint
     documents: list[dict[str, object]] = [header]
     documents.extend(record.to_dict() for record in values)
     return "".join(
@@ -305,6 +309,7 @@ def parse_translation_document(
     document: str,
     *,
     expected_fingerprint: str | None = None,
+    expected_retry_fingerprint: str | None = None,
     profile: LanguageProfile = DEFAULT_PROFILE,
 ) -> tuple[str, list[TranslationCue]]:
     values = _parse_jsonl(document, "translation records")
@@ -321,6 +326,16 @@ def parse_translation_document(
         )
     if expected_fingerprint is not None and fingerprint != expected_fingerprint:
         raise WorkflowError("translation records use a different source fingerprint")
+    # Legacy records without corrections remain usable. Legacy records with
+    # patches must be assembled once to establish which corrections they contain.
+    if (
+        expected_retry_fingerprint is not None
+        and header.get("retry_fingerprint", "") != expected_retry_fingerprint
+    ):
+        raise WorkflowError(
+            "saved corrections have changed; rebuild with translate --stage-only "
+            "--overwrite without --chunks, using the original --chunk-cues value"
+        )
     try:
         records = [TranslationCue.from_dict(value) for value in values[1:]]
     except (KeyError, TypeError, ValueError) as exc:

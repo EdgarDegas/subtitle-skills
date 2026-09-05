@@ -52,6 +52,10 @@ Cache directories include the source fingerprint, ruleset, target-language profi
 
 Validate saved retry patches against the current source, ruleset, profile, and cue IDs before model work. Apply the validated replacement records by ID only when assembling a run's output, including range previews. Never write those replacements into a base chunk cache. Adding, changing, or removing corrections therefore leaves completed base chunks reusable; only missing or invalid base chunks require Iris. Final `records/` and SRT files contain the assembled translations with the current corrections applied.
 
+Final record headers also store a `retry_fingerprint` of the corrections used for that assembly. This identifier does not affect chunk-cache paths. Before reusing an existing output, syncing, normalizing, or rerendering for an offset, verify the record header's ruleset, source, profile, and correction fingerprint. Changed or removed corrections require full assembly first. Legacy records without this field remain usable when there are no saved corrections; legacy records with corrections require one assembly to establish their applied state.
+
+Progress updates record the running code's `runtime_ruleset_version` without changing the saved translation's `ruleset_version`. Set the latter only after complete assembly or a verified rerender. Track resumable chunk progress under `chunk_ruleset_version`, with a fallback to the legacy progress ruleset. The record header is authoritative when deciding whether an existing translation can be reused.
+
 Before Iris starts, run Atlas through the existing durable curation job mechanism.
 Atlas researches the full source and merges findings directly into the shared glossary;
 see [episode-enrichment.md](episode-enrichment.md). Iris receives the complete glossary,

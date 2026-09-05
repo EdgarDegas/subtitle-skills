@@ -11,7 +11,8 @@ from .language_profiles import DEFAULT_PROFILE, LanguageProfile
 
 
 TIMESTAMP_LINE = re.compile(
-    r"^\d{2}:\d{2}:\d{2},\d{3}\s+-->\s+\d{2}:\d{2}:\d{2},\d{3}(?:\s+.*)?$"
+    r"^(\d{2}:\d{2}:\d{2},\d{3})\s+-->\s+"
+    r"(\d{2}:\d{2}:\d{2},\d{3})(?:\s+(.*))?$"
 )
 
 
@@ -101,29 +102,29 @@ def milliseconds_to_timestamp(value: int) -> str:
     return f"{hours:02d}:{minutes:02d}:{seconds:02d},{milliseconds:03d}"
 
 
-def extend_timestamp(timestamp: str, extra_ms: int = PUN_NOTE_EXTRA_MS) -> str:
-    start, separator, end_and_settings = timestamp.partition(" --> ")
-    if not separator:
+def _timestamp_parts(timestamp: str) -> tuple[str, str, str]:
+    match = TIMESTAMP_LINE.fullmatch(timestamp.strip())
+    if not match:
         raise WorkflowError(f"invalid SRT timestamp line: {timestamp}")
-    end_parts = end_and_settings.split(maxsplit=1)
-    end = milliseconds_to_timestamp(timestamp_to_milliseconds(end_parts[0]) + extra_ms)
-    settings = f" {end_parts[1]}" if len(end_parts) == 2 else ""
+    start, end, settings = match.groups()
+    return start, end, f" {settings}" if settings else ""
+
+
+def extend_timestamp(timestamp: str, extra_ms: int = PUN_NOTE_EXTRA_MS) -> str:
+    start, original_end, settings = _timestamp_parts(timestamp)
+    end = milliseconds_to_timestamp(timestamp_to_milliseconds(original_end) + extra_ms)
     return f"{start} --> {end}{settings}"
 
 
 def shift_timestamp(timestamp: str, offset_ms: int) -> str:
     """Shift one final-output timestamp, clamping values before zero."""
-    start, separator, end_and_settings = timestamp.partition(" --> ")
-    if not separator:
-        raise WorkflowError(f"invalid SRT timestamp line: {timestamp}")
-    end_parts = end_and_settings.split(maxsplit=1)
+    start, end, settings = _timestamp_parts(timestamp)
     shifted_start = milliseconds_to_timestamp(
         max(0, timestamp_to_milliseconds(start) + offset_ms)
     )
     shifted_end = milliseconds_to_timestamp(
-        max(0, timestamp_to_milliseconds(end_parts[0]) + offset_ms)
+        max(0, timestamp_to_milliseconds(end) + offset_ms)
     )
-    settings = f" {end_parts[1]}" if len(end_parts) == 2 else ""
     return f"{shifted_start} --> {shifted_end}{settings}"
 
 

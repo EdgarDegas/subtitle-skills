@@ -119,7 +119,7 @@ def _empty_patch_document(
     }
 
 
-def _patch_document(
+def load_retry_patches(
     state_dir: Path,
     video: Path,
     source_fingerprint: str,
@@ -138,6 +138,15 @@ def _patch_document(
     if not isinstance(value.get("patches"), list):
         raise WorkflowError(f"retry patch document has no patches array: {path}")
     return value
+
+
+def retry_fingerprint(document: dict[str, object]) -> str:
+    """Identify the corrections applied to records, without changing base caches."""
+    if not document["patches"]:
+        return ""
+    return hashlib.sha256(
+        json.dumps(document, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ).hexdigest()
 
 
 def _patches_by_id(document: dict[str, object]) -> dict[int, IrisCue]:
@@ -351,7 +360,7 @@ class TranslationEngine:
     ) -> TranslationRun:
         save_source_index(self.state_dir, self.video, source)
         source_cues = list(source.cues)
-        patch_document = _patch_document(
+        patch_document = load_retry_patches(
             self.state_dir,
             self.video,
             source.fingerprint,
@@ -510,6 +519,7 @@ class TranslationEngine:
             raise WorkflowError("combined translation records are incomplete or out of order")
         return TranslationRun(
             records=tuple(all_records),
+            retry_fingerprint=retry_fingerprint(patch_document),
             chunk_start=chunk_start,
             chunk_end=chunk_end,
             chunks_total=len(ranges),
@@ -547,7 +557,7 @@ def save_retry_patches(
     reason: str,
     profile: LanguageProfile = DEFAULT_PROFILE,
 ) -> Path:
-    document = _patch_document(state_dir, video, fingerprint, profile)
+    document = load_retry_patches(state_dir, video, fingerprint, profile)
     existing = {
         int(item["id"]): item
         for item in document.get("patches", [])
@@ -573,6 +583,20 @@ def save_retry_patches(
     )
     path = retry_path(state_dir, video, profile)
     write_json(path, document)
+    # Persist invalidation immediately, before any optional curation work.
+    update_progress(
+        state_dir,
+        video,
+        profile=profile,
+        status="retry_ready",
+        source_fingerprint=fingerprint,
+        retry_patches=str(path),
+        retry_patches_saved=len(records),
+        assembly_required=True,
+        output_ready=False,
+        records_ready=False,
+        synced=False,
+    )
     return path
 
 
@@ -670,13 +694,4 @@ def manual_retry(
             request_id="atlas-manual",
             profile=profile,
         )
-    update_progress(
-        state_dir,
-        video,
-        profile=profile,
-        status="retry_ready",
-        source_fingerprint=source.fingerprint,
-        retry_patches=str(path),
-        retry_patches_saved=len(validated),
-    )
     return path

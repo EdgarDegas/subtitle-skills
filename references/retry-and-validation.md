@@ -60,6 +60,8 @@ Manual cue retries allow at most three Iris attempts, including model-call failu
 
 Retry records are replacements applied during assembly, independent of the original chunk caches. A saved correction does not invalidate completed chunks or rewrite their original text. After a retry, run `translate --stage-only` without `--chunks` to rebuild the full local output; include `--overwrite` when replacing an existing staged output is authorized. Use the same `--chunk-cues` value as the original run so its cache layout remains compatible. Completed chunks are loaded locally and current corrections are applied by ID; only missing or invalid chunks require translation. The retry command itself saves corrections without changing the existing SRT, and syncing remains a separate step.
 
+Saving a correction immediately marks records and output as pending assembly and clears the synced flag. Sync, normalization, offset rerendering, and reuse of an existing staged output refuse pending corrections with a rebuild instruction. The assembled record header identifies which corrections were applied, so manually edited or removed patches are detected even when progress flags still say the output is ready. Rebuilding clears the pending state; syncing can then publish the corrected output.
+
 ## Atlas retry
 
 Atlas editing is independent from Iris validation. A failed or interrupted Atlas edit

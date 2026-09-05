@@ -5,6 +5,7 @@ import unittest
 from codex_subtitles.config import TOP_POSITION_TAG
 from codex_subtitles.domain import Addition, TranslationCue
 from codex_subtitles.errors import WorkflowError
+from codex_subtitles.protocol import build_source_document
 from codex_subtitles.srt import (
     clean_source_srt,
     normalize_text,
@@ -15,6 +16,27 @@ from codex_subtitles.srt import (
 
 
 class SrtTests(unittest.TestCase):
+    def test_timestamp_whitespace_supports_offsets_and_pun_notes(self) -> None:
+        for before, after in ((" ", " "), ("  ", "   "), ("\t", "\t"), (" \t", "\t ")):
+            for settings in ("", " X1:10 X2:20 Y1:30 Y2:40"):
+                with self.subTest(before=before, after=after, settings=settings):
+                    timestamp = f"00:00:01,000{before}-->{after}00:00:02,000{settings}"
+                    document = f"1\n{timestamp}\nFinnish?\n"
+                    source = build_source_document(document)
+                    records = [TranslationCue(
+                        1, "1", timestamp, "Finnish?", "芬兰语？", False,
+                        additions=(Addition("pun_note", "“芬兰语”与“完成”同音"),),
+                    )]
+                    rendered = render_translation(records)
+                    cues = parse_srt(rendered.document)
+                    self.assertEqual(cues[0].timestamp, f"00:00:01,000 --> 00:00:03,500{settings}")
+                    self.assertEqual(cues[1].timestamp, timestamp)
+                    shifted = parse_srt(shift_srt_timing(rendered.document, -500))
+                    self.assertEqual(shifted[0].timestamp, f"00:00:00,500 --> 00:00:03,000{settings}")
+                    self.assertEqual(shifted[1].timestamp, f"00:00:00,500 --> 00:00:01,500{settings}")
+                    self.assertEqual(records[0].timestamp, timestamp)
+                    self.assertEqual(build_source_document(clean_source_srt(document)), source)
+
     def test_source_cleanup_does_not_infer_top_position_from_music_marks(self) -> None:
         document = (
             "1\n00:00:01,000 --> 00:00:02,000\n♪ This is a lyric ♪\n\n"

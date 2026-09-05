@@ -168,6 +168,7 @@ class TranslationRun:
     chunk_start: int
     chunk_end: int
     chunks_total: int
+    retry_fingerprint: str
 
     @property
     def chunks_completed(self) -> int:

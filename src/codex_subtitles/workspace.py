@@ -214,11 +214,15 @@ def save_records(
     source_fingerprint: str,
     records: list[TranslationCue],
     profile: LanguageProfile = DEFAULT_PROFILE,
+    *,
+    retry_fingerprint: str | None = None,
 ) -> Path:
     path = records_path(state_dir, video, profile)
     atomic_write(
         path,
-        serialize_translation_document(source_fingerprint, records, profile),
+        serialize_translation_document(
+            source_fingerprint, records, profile, retry_fingerprint=retry_fingerprint,
+        ),
     )
     return path
 
@@ -228,6 +232,7 @@ def load_records(
     video: Path,
     *,
     expected_fingerprint: str | None = None,
+    expected_retry_fingerprint: str | None = None,
     profile: LanguageProfile = DEFAULT_PROFILE,
 ) -> list[TranslationCue]:
     path = records_path(state_dir, video, profile)
@@ -236,6 +241,7 @@ def load_records(
     _, records = parse_translation_document(
         path.read_text(encoding="utf-8"),
         expected_fingerprint=expected_fingerprint,
+        expected_retry_fingerprint=expected_retry_fingerprint,
         profile=profile,
     )
     return records
@@ -290,7 +296,7 @@ def update_progress(
         {
             "video": video.name,
             "video_path": str(video),
-            "ruleset_version": RULESET_VERSION,
+            "runtime_ruleset_version": RULESET_VERSION,
             "translation_model": TRANSLATOR_MODEL,
             "glossary_model": CURATOR_MODEL,
             "profile": profile.id,

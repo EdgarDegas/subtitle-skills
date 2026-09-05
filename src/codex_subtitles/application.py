@@ -26,7 +26,7 @@ from .srt import (
     render_translation,
     shift_srt_timing,
 )
-from .workflow import TranslationEngine, manual_retry
+from .workflow import TranslationEngine, load_retry_patches, manual_retry, retry_fingerprint
 from .workspace import (
     atomic_write,
     collection_dir,
@@ -38,6 +38,7 @@ from .workspace import (
     progress_path,
     read_json,
     records_path,
+    retry_path,
     save_render_map,
     save_records,
     save_source_index,
@@ -65,20 +66,58 @@ class RunOptions:
     profile: LanguageProfile = DEFAULT_PROFILE
 
 
-def _stored_ruleset(
+def _load_assembled_records(
     state_dir: Path,
     video: Path,
     profile: LanguageProfile = DEFAULT_PROFILE,
-) -> str | None:
-    path = progress_path(state_dir, video, profile)
-    if not path.is_file():
-        return None
+) -> tuple[str, list[TranslationCue]]:
+    """Check the saved artifact itself before reusing or publishing its output."""
     try:
-        value = read_json(path)
+        progress = _existing_progress(state_dir, video, profile)
+        fingerprint = str(progress.get("source_fingerprint") or "")
+        if not fingerprint:
+            raise WorkflowError(f"episode has no source fingerprint: {video.name}")
+        patches = load_retry_patches(state_dir, video, fingerprint, profile)
+        records = load_records(
+            state_dir,
+            video,
+            expected_fingerprint=fingerprint,
+            expected_retry_fingerprint=retry_fingerprint(patches),
+            profile=profile,
+        )
+        _require_full_assembly(progress)
     except WorkflowError:
-        return None
-    ruleset = value.get("ruleset_version")
-    return str(ruleset) if ruleset else None
+        update_progress(
+            state_dir, video, profile=profile, assembly_required=True,
+            output_ready=False, records_ready=False, synced=False,
+        )
+        raise
+    return fingerprint, records
+
+
+def _require_full_assembly(progress: dict[str, object]) -> None:
+    if progress.get("assembly_required"):
+        raise WorkflowError(
+            "full output assembly is required; rebuild with translate --stage-only "
+            "--overwrite without --chunks, using the original --chunk-cues value"
+        )
+
+
+def _check_output_without_records(
+    state_dir: Path, video: Path, profile: LanguageProfile,
+) -> None:
+    progress = _existing_progress(state_dir, video, profile)
+    _require_full_assembly(progress)
+    if retry_path(state_dir, video, profile).is_file():
+        update_progress(
+            state_dir, video, profile=profile, assembly_required=True,
+            output_ready=False, records_ready=False, synced=False,
+        )
+        raise WorkflowError(
+            "cannot verify saved corrections without translation records; "
+            "rebuild with translate --stage-only --overwrite without --chunks, "
+            "using the original --chunk-cues value"
+        )
 
 
 def _existing_progress(
@@ -103,8 +142,9 @@ def _compatible_completed_chunks(
     chunk_cues: int,
     profile: LanguageProfile = DEFAULT_PROFILE,
 ) -> set[int]:
+    chunk_ruleset = progress.get("chunk_ruleset_version", progress.get("ruleset_version"))
     if (
-        progress.get("ruleset_version") != RULESET_VERSION
+        chunk_ruleset != RULESET_VERSION
         or progress.get("source_fingerprint") != source_fingerprint
         or int(progress.get("chunk_cues") or chunk_cues) != chunk_cues
         or str(progress.get("profile") or DEFAULT_PROFILE.id) != profile.id
@@ -159,16 +199,7 @@ def rerender_saved_output(
     """Rebuild a final local SRT from records without any model or media call."""
     state_dir = collection_dir(video, workspace_root)
     ensure_layout(state_dir)
-    progress = _existing_progress(state_dir, video, profile)
-    fingerprint = str(progress.get("source_fingerprint") or "")
-    if not fingerprint:
-        raise WorkflowError(f"episode has no source fingerprint: {video.name}")
-    records = load_records(
-        state_dir,
-        video,
-        expected_fingerprint=fingerprint,
-        profile=profile,
-    )
+    fingerprint, records = _load_assembled_records(state_dir, video, profile)
     rendered, render_map, _, offset_ms = _write_final_output(
         state_dir, video, fingerprint, records, profile
     )
@@ -178,6 +209,7 @@ def rerender_saved_output(
         video,
         profile=profile,
         status="staged",
+        ruleset_version=RULESET_VERSION,
         subtitle_offset_ms=offset_ms,
         output=str(staged_output),
         output_ready=True,
@@ -264,6 +296,8 @@ def process_video(video: Path, options: RunOptions) -> str:
     if options.sync_only:
         if records_path(state_dir, video, profile).is_file():
             rerender_saved_output(video, options.workspace_root, profile)
+        else:
+            _check_output_without_records(state_dir, video, profile)
         if not staged_output.is_file():
             raise WorkflowError(f"no staged output: {staged_output}")
         document = normalize_srt(
@@ -298,6 +332,10 @@ def process_video(video: Path, options: RunOptions) -> str:
         return f"SYNCED {staged_output} -> {destination}"
 
     if options.normalize_only:
+        if records_path(state_dir, video, profile).is_file():
+            _load_assembled_records(state_dir, video, profile)
+        else:
+            _check_output_without_records(state_dir, video, profile)
         if not staged_output.is_file():
             raise WorkflowError(f"no staged output: {staged_output}")
         document = normalize_srt(
@@ -348,12 +386,11 @@ def process_video(video: Path, options: RunOptions) -> str:
         return f"RETRY READY {video.name}: {path}"
 
     if staged_output.is_file() and not options.overwrite:
-        stored = _stored_ruleset(state_dir, video, profile)
-        if stored == RULESET_VERSION and records_path(state_dir, video, profile).is_file():
-            return f"SKIP {video.name}: current staged output exists"
-        raise WorkflowError(
-            f"staged output is stale ({stored or 'unknown'}); use --overwrite for {RULESET_VERSION}"
-        )
+        try:
+            _load_assembled_records(state_dir, video, profile)
+        except WorkflowError as exc:
+            raise WorkflowError(f"staged output is stale: {exc}; use --overwrite") from exc
+        return f"SKIP {video.name}: current staged output exists"
 
     if not options.stage_only and not options.overwrite:
         existing = existing_target_subtitles(video, tools, profile)
@@ -418,6 +455,7 @@ def process_video(video: Path, options: RunOptions) -> str:
                 video,
                 profile=profile,
                 status="translating",
+                chunk_ruleset_version=RULESET_VERSION,
                 source=description,
                 source_file=str(source),
                 source_fingerprint=source_document.fingerprint,
@@ -527,6 +565,7 @@ def process_video(video: Path, options: RunOptions) -> str:
                 source_document.fingerprint,
                 records,
                 profile,
+                retry_fingerprint=run.retry_fingerprint,
             )
             rendered, render_map, final_document, offset_ms = _write_final_output(
                 state_dir,
@@ -553,6 +592,7 @@ def process_video(video: Path, options: RunOptions) -> str:
             video,
             profile=profile,
             status="staged",
+            ruleset_version=RULESET_VERSION,
             source_fingerprint=source_document.fingerprint,
             source_index=str(source_index),
             chunks_completed=chunks_total,
