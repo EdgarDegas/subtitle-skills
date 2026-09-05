@@ -12,7 +12,7 @@ The current `zh-hans` profile owns:
 - Iris translation instructions and Atlas curation instructions
 - target punctuation normalization
 - translated speaker-label detection
-- target-specific `pun_note` length and content rules
+- target-specific `pun_note` length rules
 
 The protocol field for a proposed glossary translation is the language-neutral `target`. Translation records store the selected profile in their document header. Legacy records without that field mean the default `zh-hans` profile, so existing validated chunks remain reusable.
 

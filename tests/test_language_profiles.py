@@ -81,9 +81,6 @@ class LanguageProfileTests(unittest.TestCase):
             def translated_speaker_label(self, text: str) -> bool:
                 return False
 
-            def validate_pun_note(self, text: str) -> str | None:
-                return None
-
         profile = TestProfile(
             id="test-target",
             language_name="Test Target",

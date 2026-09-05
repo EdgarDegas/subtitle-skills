@@ -138,14 +138,6 @@ def _validate_additions(
                 skippable=False,
             )
         if kind == "pun_note":
-            profile_error = profile.validate_pun_note(text)
-            if profile_error:
-                raise ValidationIssue(
-                    "addition",
-                    f"pun_note for cue {source.id} {profile_error}",
-                    cue_ids=(source.id,),
-                    skippable=False,
-                )
             if source.text.lstrip().startswith(TOP_POSITION_TAG):
                 raise ValidationIssue(
                     "addition",

@@ -28,12 +28,6 @@ class SimplifiedChineseProfile(LanguageProfile):
     def translated_speaker_label(self, text: str) -> bool:
         return bool(_TRANSLATED_SPEAKER_LABEL.match(text))
 
-    def validate_pun_note(self, text: str) -> str | None:
-        if re.search(r"[A-Za-z]", text):
-            return "contains source-language text"
-        return None
-
-
 ZH_HANS = SimplifiedChineseProfile(
     id="zh-hans",
     language_name="Simplified Chinese",
@@ -55,8 +49,8 @@ ZH_HANS = SimplifiedChineseProfile(
     translation_instructions="""- Translate into natural Simplified Chinese. Use standard Simplified Chinese translations for commonplace standalone first names, real countries, and well-known real cities.
 - English kinship words may omit distinctions Chinese requires. Use verified episode relationships and speaker/referent context for 哥哥/弟弟, 姐姐/妹妹, 堂/表 relatives and maternal/paternal relations. Never infer seniority from the word brother alone. If the relation or referent is unknown, use a natural neutral phrasing instead of guessing. A younger sibling saying 'I am a bad brother' refers to himself as 弟弟; accusing his older sibling refers to 哥哥.
 - Remove laughter fragments such as `Heh`, `Ha-ha`, `Ho-ho`, `呵呵`, and `哈哈`; delete the whole cue only when it contains no dialogue or lyrics.
-- Keep actual lyrics and visible on-screen words. Preserve an existing `{\\an8}` prefix exactly; add it to visible signs, papers, screens, labels, title cards, and messages after removing descriptive wrappers.
-- If an intentional pun cannot survive natural Chinese, keep the literal translation in `text` and add one `pun_note`. Explain only the lost relationship, use no source-language words, keep it to one line and at most 32 Chinese characters, and add no explanatory prefix such as `Pun:`, `双关`, `注`, or `译注`. Prefer `“芬兰语”与“完成”同音`.
+- Keep actual lyrics and visible on-screen words. Decide from context whether music-marked text is an actual lyric. Preserve an existing `{\\an8}` prefix exactly; add it to actual lyrics and to visible signs, papers, screens, labels, title cards, and messages after removing descriptive wrappers.
+- If an intentional pun cannot survive natural Chinese, keep the literal translation in `text` and add one `pun_note`. Explain only the lost relationship, use whichever language makes it clearest, keep it to one line and at most 32 characters, and add no explanatory prefix such as `Pun:`, `双关`, `注`, or `译注`. Prefer `“芬兰语”与“完成”同音` when a concise Chinese explanation works.
 - Preserve information-reveal order at every cue boundary. Example: `At the end of the corridor... / holding the gun... / was Anna` becomes `在走廊尽头... / 有个人拿着那把枪... / 她就是安娜`, without naming Anna early.
 - Do not end lines with `。` or a single `.`, keep commas, and write ellipses as exactly `...`.""",
     curator_instructions="""- Maintain target terms in Simplified Chinese and preserve Iris's proposed target exactly when accepting a new entry.

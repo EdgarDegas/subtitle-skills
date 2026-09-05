@@ -19,8 +19,8 @@ Lyrics and visible text already present in the source are ordinary source-aligne
 When an intentional second meaning cannot survive natural Chinese, keep the ordinary or literal translation at the bottom and attach one `pun_note` addition. Its rendered top cue:
 
 - explains only the lost relationship needed to understand the line or reaction
-- contains no source-language words
-- is one line and at most 32 Chinese characters
+- may use any language when that explains the lost relationship most clearly
+- is one line and at most 32 characters
 - never starts with `Pun:`, `双关`, `注`, `译注`, or another explanatory label
 - remains slightly longer than the main cue for reading time
 

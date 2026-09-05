@@ -5,6 +5,7 @@ import unittest
 from codex_subtitles.config import TOP_POSITION_TAG
 from codex_subtitles.domain import Addition, TranslationCue
 from codex_subtitles.srt import (
+    clean_source_srt,
     normalize_text,
     parse_srt,
     render_translation,
@@ -13,6 +14,15 @@ from codex_subtitles.srt import (
 
 
 class SrtTests(unittest.TestCase):
+    def test_source_cleanup_does_not_infer_top_position_from_music_marks(self) -> None:
+        document = (
+            "1\n00:00:01,000 --> 00:00:02,000\n♪ This is a lyric ♪\n\n"
+            "2\n00:00:03,000 --> 00:00:04,000\n{\\an8}Explicit top text\n"
+        )
+        cues = parse_srt(clean_source_srt(document))
+        self.assertEqual(cues[0].text, "♪ This is a lyric ♪")
+        self.assertEqual(cues[1].text, TOP_POSITION_TAG + "Explicit top text")
+
     def test_punctuation_policy(self) -> None:
         self.assertEqual(
             normalize_text("你好。\n等等……\n好, 好."),

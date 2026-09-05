@@ -246,7 +246,7 @@ class ProtocolTests(unittest.TestCase):
                 )
                 self.assertEqual(result[0].additions[0].text, text)
 
-    def test_pun_is_a_validated_addition(self) -> None:
+    def test_pun_is_structurally_validated_and_may_use_any_language(self) -> None:
         cues = list(build_source_document(make_srt(["Finnish?"])).cues)
         result = validate_iris_cues(
             cues,
@@ -261,20 +261,19 @@ class ProtocolTests(unittest.TestCase):
             retry=False,
         )
         self.assertEqual(result[0].additions[0].text, "“芬兰语”与“完成”同音")
-        with self.assertRaises(ValidationIssue) as invalid:
-            validate_iris_cues(
-                cues,
-                [
-                    IrisCue(
-                        1,
-                        "芬兰语？",
-                        False,
-                        additions=(Addition("pun_note", "Finnish 与 finish 同音"),),
-                    )
-                ],
-                retry=False,
-            )
-        self.assertEqual(invalid.exception.check, "addition")
+        multilingual = validate_iris_cues(
+            cues,
+            [
+                IrisCue(
+                    1,
+                    "芬兰语？",
+                    False,
+                    additions=(Addition("pun_note", "Finnish 与 finish 同音"),),
+                )
+            ],
+            retry=False,
+        )
+        self.assertEqual(multilingual[0].additions[0].text, "Finnish 与 finish 同音")
 
 
 if __name__ == "__main__":

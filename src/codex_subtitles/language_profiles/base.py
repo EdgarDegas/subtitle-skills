@@ -39,10 +39,6 @@ class LanguageProfile(ABC):
     def translated_speaker_label(self, text: str) -> bool:
         raise NotImplementedError
 
-    @abstractmethod
-    def validate_pun_note(self, text: str) -> str | None:
-        raise NotImplementedError
-
     def output_filename(self, video_stem: str) -> str:
         return f"{video_stem}.{self.output_tag}.srt"
 

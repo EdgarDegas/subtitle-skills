@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .codex_client import CodexClient, append_log
-from .config import DEFAULT_CHUNK_CUES, RULESET_VERSION, TOP_POSITION_TAG
+from .config import DEFAULT_CHUNK_CUES, RULESET_VERSION
 from .domain import RenderResult, TranslationCue
 from .errors import WorkflowError
 from .glossary import ensure_glossary, write_usage
@@ -413,10 +413,6 @@ def process_video(video: Path, options: RunOptions) -> str:
             else:
                 selected_start = 1
                 selected_end = chunks_total
-            lyrics = sum(
-                cue.text.lstrip().startswith(TOP_POSITION_TAG)
-                for cue in source_document.cues
-            )
             update_progress(
                 state_dir,
                 video,
@@ -428,7 +424,6 @@ def process_video(video: Path, options: RunOptions) -> str:
                 source_fingerprint_pending=False,
                 source_index=str(source_index),
                 cues_total=len(source_document.cues),
-                lyric_cues_positioned_top=lyrics,
                 chunk_cues=options.chunk_cues,
                 chunks_completed=len(completed_chunks),
                 completed_chunks=sorted(completed_chunks),

@@ -28,7 +28,7 @@ Protocol checks protect safe mapping and rendering and therefore cannot be skipp
 
 Require every target integer ID exactly once. Reject context IDs, unknown IDs, omissions, and duplicates. Rebuild timestamps, source text, and original SRT numbers from the local source index; Iris never controls them.
 
-Iris owns the semantic decision that a cue is purely non-speech. Do not enumerate source-language sounds or reject a deletion based on source wording. Deterministically require every `drop=true` record to have empty `text` and `additions`. Validate addition kinds through a whitelist. A `pun_note` must be short, Chinese-only, and absent from an already top-positioned main cue.
+Iris owns the semantic decision that a cue is purely non-speech. Do not enumerate source-language sounds or reject a deletion based on source wording. Deterministically require every `drop=true` record to have empty `text` and `additions`. Validate addition kinds through a whitelist. A `pun_note` must be short and absent from an already top-positioned main cue; Iris may use any language in it.
 
 Run the speaker-label residue check. Translation completeness, laughter removal, and omission of explanatory prefixes on pun notes are Iris prompt responsibilities, not deterministic checks. Do not run a separate duplicate semantic-review model pass.
 

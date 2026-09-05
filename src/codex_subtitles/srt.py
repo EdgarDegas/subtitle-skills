@@ -72,22 +72,15 @@ def normalize_srt(
     )
 
 
-def is_lyric(text: str) -> bool:
-    if "♪" not in text:
-        return False
-    words = re.sub(r"\[[^\]]+\]|\([^()]+\)", "", text.replace("♪", ""))
-    return any(character.isalnum() for character in words)
-
-
 def clean_source_srt(document: str) -> str:
     cues: list[SrtCue] = []
     for cue in parse_srt(document):
-        lyric = is_lyric(cue.text)
+        top_positioned = cue.text.lstrip().startswith(TOP_POSITION_TAG)
         text = re.sub(r"<[^>]+>|\{\\[^}]+\}", "", cue.text)
         text = html.unescape(text).strip()
         if not text:
             raise WorkflowError(f"empty cue after styling cleanup: {cue.number}")
-        if lyric:
+        if top_positioned:
             text = TOP_POSITION_TAG + text
         cues.append(SrtCue(cue.number, cue.timestamp, text))
     return format_srt(cues)
