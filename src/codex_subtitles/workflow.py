@@ -107,6 +107,18 @@ def _candidate_ids_are_targets(
         )
 
 
+def _empty_patch_document(
+    source_fingerprint: str, profile: LanguageProfile,
+) -> dict[str, object]:
+    return {
+        "version": 2,
+        "ruleset_version": RULESET_VERSION,
+        "source_fingerprint": source_fingerprint,
+        "profile": profile.id,
+        "patches": [],
+    }
+
+
 def _patch_document(
     state_dir: Path,
     video: Path,
@@ -115,13 +127,7 @@ def _patch_document(
 ) -> dict[str, object]:
     path = retry_path(state_dir, video, profile)
     if not path.is_file():
-        return {
-            "version": 2,
-            "ruleset_version": RULESET_VERSION,
-            "source_fingerprint": source_fingerprint,
-            "profile": profile.id,
-            "patches": [],
-        }
+        return _empty_patch_document(source_fingerprint, profile)
     value = read_json(path)
     if (
         value.get("ruleset_version") != RULESET_VERSION
@@ -181,23 +187,25 @@ class TranslationEngine:
         self.chunk_cues = chunk_cues
         self.profile = profile
 
-    def _cache_dir(
+    def _cache_path(
         self,
         source_fingerprint: str,
-        patch_document: dict[str, object],
+        *,
+        legacy_patches: dict[str, object] | None = None,
     ) -> Path:
-        digest = hashlib.sha256(
-            json.dumps(patch_document, ensure_ascii=False, sort_keys=True).encode("utf-8")
-        ).hexdigest()[:10]
+        patch_suffix = ""
+        if legacy_patches is not None:
+            digest = hashlib.sha256(
+                json.dumps(legacy_patches, ensure_ascii=False, sort_keys=True).encode("utf-8")
+            ).hexdigest()[:10]
+            patch_suffix = f".p{digest}"
         profile_suffix = (
             "" if self.profile.id == DEFAULT_PROFILE.id else f".l{self.profile.id}"
         )
-        path = self.state_dir / "chunks" / (
+        return self.state_dir / "chunks" / (
             f"{self.video.stem}.src-{source_fingerprint[:12]}.r{RULESET_VERSION}."
-            f"c{self.chunk_cues}.o{CONTEXT_CUES}.p{digest}{profile_suffix}"
+            f"c{self.chunk_cues}.o{CONTEXT_CUES}{patch_suffix}{profile_suffix}"
         )
-        path.mkdir(parents=True, exist_ok=True)
-        return path
 
     def _translate_chunk(
         self,
@@ -207,7 +215,6 @@ class TranslationEngine:
         core_end: int,
         chunk_index: int,
         chunk_total: int,
-        patches: dict[int, IrisCue],
     ) -> tuple[list[TranslationCue], list[GlossaryCandidate]]:
         targets = all_sources[core_start:core_end]
         target_ids = {cue.id for cue in targets}
@@ -301,14 +308,10 @@ class TranslationEngine:
                     candidates.extend(response.glossary_candidates)
 
                 assert raw_by_id is not None
-                merged = dict(raw_by_id)
-                merged.update(
-                    {cue_id: patch for cue_id, patch in patches.items() if cue_id in target_ids}
-                )
                 validated = validate_iris_cues(
                     targets,
-                    [merged[cue.id] for cue in targets if cue.id in merged],
-                    retry=attempt > 1 or any(cue.id in patches for cue in targets),
+                    list(raw_by_id.values()),
+                    retry=attempt > 1,
                     profile=self.profile,
                 )
                 break
@@ -360,7 +363,25 @@ class TranslationEngine:
             raise WorkflowError(
                 "retry patches contain unknown IDs: " + ", ".join(map(str, unknown_patches))
             )
-        cache_dir = self._cache_dir(source.fingerprint, patch_document)
+        # Corrections are validated against the same immutable source as the
+        # base records, but never become part of the chunk cache identity.
+        corrected = {
+            record.id: record
+            for record in validate_iris_cues(
+                [cue for cue in source_cues if cue.id in patches],
+                patches.values(),
+                retry=True,
+                profile=self.profile,
+            )
+        }
+        cache_dir = self._cache_path(source.fingerprint)
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        # Only an empty-patch legacy namespace is a trustworthy original. Other
+        # old namespaces may have permanently baked corrections into their text.
+        legacy_cache_dir = self._cache_path(
+            source.fingerprint,
+            legacy_patches=_empty_patch_document(source.fingerprint, self.profile),
+        )
         ranges = [
             (start, min(start + self.chunk_cues, len(source_cues)))
             for start in range(0, len(source_cues), self.chunk_cues)
@@ -388,15 +409,19 @@ class TranslationEngine:
             targets = source_cues[core_start:core_end]
             window_start = max(0, core_start - CONTEXT_CUES)
             window_end = min(len(source_cues), core_end + CONTEXT_CUES)
-            # Completed chunks survive subsequent glossary edits. Only new Iris
-            # requests consume the latest glossary through _translate_chunk.
+            # Persist base translations independently of glossary edits and
+            # saved corrections. Merge corrections only into this run's output.
             cache = cache_dir / f"chunk-{chunk_index:03d}.jsonl"
-            legacy_caches = sorted(
-                cache_dir.glob(f"{cache.stem}.g*.jsonl"),
-                key=lambda path: (path.stat().st_mtime_ns, path.name),
-                reverse=True,
-            )
-            cache_candidates = ([cache] if cache.is_file() else []) + legacy_caches
+            cache_candidates = []
+            for directory in (cache_dir, legacy_cache_dir):
+                stable = directory / cache.name
+                if stable.is_file():
+                    cache_candidates.append(stable)
+                cache_candidates.extend(sorted(
+                    directory.glob(f"{cache.stem}.g*.jsonl"),
+                    key=lambda path: (path.stat().st_mtime_ns, path.name),
+                    reverse=True,
+                ))
             records: list[TranslationCue] | None = None
             for cached_path in cache_candidates:
                 try:
@@ -418,8 +443,7 @@ class TranslationEngine:
                     )
                     continue
                 if cached_path != cache:
-                    # Promote the newest valid legacy snapshot without changing
-                    # its source, ruleset, profile, or retry-patch namespace.
+                    # Promote only validated, unpatched legacy records.
                     atomic_write(
                         cache,
                         serialize_translation_document(source.fingerprint, records, self.profile),
@@ -436,7 +460,6 @@ class TranslationEngine:
                     core_end=core_end,
                     chunk_index=chunk_index,
                     chunk_total=len(ranges),
-                    patches=patches,
                 )
                 request_id = f"atlas-c{chunk_index:03d}"
                 job = enqueue_curation(
@@ -462,7 +485,7 @@ class TranslationEngine:
                     f"CHUNK VALIDATED: {chunk_index}/{len(ranges)} "
                     f"core={core_start + 1}-{core_end} window={window_start + 1}-{window_end}",
                 )
-                all_records.extend(records)
+                all_records.extend(corrected.get(record.id, record) for record in records)
                 if progress_callback:
                     progress_callback(chunk_index, len(ranges))
                 if job is not None:
@@ -476,7 +499,7 @@ class TranslationEngine:
                         profile=self.profile,
                     )
             else:
-                all_records.extend(records)
+                all_records.extend(corrected.get(record.id, record) for record in records)
                 if progress_callback:
                     progress_callback(chunk_index, len(ranges))
         expected_first_id = selected_ranges[0][1][0] + 1

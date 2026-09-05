@@ -25,6 +25,53 @@ from codex_subtitles.workspace import (
 
 
 class ApplicationTests(unittest.TestCase):
+    def test_manual_correction_rebuilds_completed_output_without_retranslation(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_name:
+            root = Path(temp_name)
+            video = root / "media" / "Show" / "S01" / "Show S01E01.mkv"
+            workspace = root / "workspace"
+            state = collection_dir(video, workspace)
+            ensure_layout(state)
+            source = state / "sources" / f"{video.stem}.embedded-stream-3.srt"
+            source.write_text(
+                "\n\n".join(
+                    f"{cue_id}\n00:00:0{cue_id},000 --> 00:00:0{cue_id},900\nLine {cue_id}"
+                    for cue_id in range(1, 4)
+                ) + "\n", encoding="utf-8",
+            )
+            with patch("codex_subtitles.application.CodexClient") as client_type:
+                client = client_type.return_value
+                client.enrich_glossary.return_value = "No glossary changes needed"
+                client.translate.side_effect = [
+                    IrisResponse((IrisCue(cue_id, f"译文{cue_id}", False),))
+                    for cue_id in range(1, 4)
+                ] + [IrisResponse((IrisCue(2, "修正第二句", False),))]
+                process_video(video, RunOptions(workspace_root=workspace, stage_only=True, chunk_cues=1))
+                cache_bytes = {path: path.read_bytes() for path in (state / "chunks").rglob("*.jsonl")}
+                original = parse_srt(output_path(state, video).read_text(encoding="utf-8"))
+
+                result = process_video(video, RunOptions(
+                    workspace_root=workspace, retry_cues="2", retry_reason="Fix cue 2",
+                ))
+                self.assertTrue(result.startswith("RETRY READY "))
+                self.assertEqual(client.translate.call_count, 4)
+                client.translate.reset_mock(side_effect=True)
+                client.translate.side_effect = AssertionError("completed chunks must not be translated again")
+                client.enrich_glossary.reset_mock()
+
+                result = process_video(video, RunOptions(
+                    workspace_root=workspace, stage_only=True, chunk_cues=1, overwrite=True,
+                ))
+                self.assertTrue(result.startswith("STAGED "))
+                client.translate.assert_not_called()
+                client.enrich_glossary.assert_not_called()
+                revised = parse_srt(output_path(state, video).read_text(encoding="utf-8"))
+                self.assertEqual([cue.text for cue in revised], ["译文1", "修正第二句", "译文3"])
+                self.assertEqual([cue.timestamp for cue in revised], [cue.timestamp for cue in original])
+                self.assertEqual(
+                    {path: path.read_bytes() for path in (state / "chunks").rglob("*.jsonl")}, cache_bytes,
+                )
+
     def test_resume_later_chunks_writes_preview_then_assembles_cached_episode(self) -> None:
         with tempfile.TemporaryDirectory() as temp_name:
             root = Path(temp_name)

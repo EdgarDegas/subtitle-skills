@@ -54,7 +54,9 @@ Never accept an appeal for a protocol check. Additions and appeals are separate 
 
 ## User-initiated retry
 
-A user can begin directly with `--retry-cues` and a reason. The selector refers to source episode IDs, even if the episode has no complete translation yet. Save validated retry records in `retries/`; future chunk translation applies them by ID and gives the retry file its own source fingerprint. A fingerprint mismatch invalidates the patches.
+A user can begin directly with `--retry-cues` and a reason. The selector refers to source episode IDs, even if the episode has no complete translation yet. Save validated retry records in `retries/`, bound to the source fingerprint, ruleset, and profile. A mismatch invalidates the patches.
+
+Retry records are replacements applied during assembly, independent of the original chunk caches. A saved correction does not invalidate completed chunks or rewrite their original text. After a retry, run `translate --stage-only` without `--chunks` to rebuild the full local output; include `--overwrite` when replacing an existing staged output is authorized. Use the same `--chunk-cues` value as the original run so its cache layout remains compatible. Completed chunks are loaded locally and current corrections are applied by ID; only missing or invalid chunks require translation. The retry command itself saves corrections without changing the existing SRT, and syncing remains a separate step.
 
 ## Atlas retry
 

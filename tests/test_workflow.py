@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
-from codex_subtitles.domain import GlossaryCandidate, IrisCue, IrisResponse
+from codex_subtitles.config import CONTEXT_CUES, RULESET_VERSION
+from codex_subtitles.domain import Addition, GlossaryCandidate, IrisCue, IrisResponse
 from codex_subtitles.curation import ensure_episode_enrichment
 from codex_subtitles.errors import WorkflowError
 from codex_subtitles.glossary import ensure_glossary
@@ -15,8 +18,9 @@ from codex_subtitles.protocol import (
     serialize_translation_document,
     validate_iris_cues,
 )
-from codex_subtitles.workflow import TranslationEngine, manual_retry
-from codex_subtitles.workspace import ensure_layout, read_json
+from codex_subtitles.language_profiles import DEFAULT_PROFILE
+from codex_subtitles.workflow import TranslationEngine, manual_retry, save_retry_patches
+from codex_subtitles.workspace import ensure_layout, read_json, retry_path, write_json
 
 
 def make_srt(texts: list[str]) -> str:
@@ -94,6 +98,138 @@ class AtlasFailingClient(FakeClient):
 
 
 class WorkflowTests(unittest.TestCase):
+    def test_saved_corrections_change_output_without_retranslating_or_mutating_base(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_name:
+            state = Path(temp_name) / "Show" / "S01"
+            ensure_layout(state)
+            video = Path("Show S01E01.mkv")
+            source = build_source_document(make_srt(["Hello", "A pun", "[DOOR OPENS]"]))
+            client = FakeClient()
+            engine = TranslationEngine(
+                client=client, state_dir=state, video=video,
+                log_path=state / "logs" / "test.log", chunk_cues=1,
+            )
+            original = engine.translate(source)
+            cache_bytes = {path: path.read_bytes() for path in (state / "chunks").rglob("*.jsonl")}
+            client.prompts.clear()
+            for text, reason in (("第一次修正", "Fix meaning"), ("第二次修正", "Improve wording")):
+                save_retry_patches(
+                    state, video, fingerprint=source.fingerprint,
+                    records=[
+                        replace(original.records[1], text=text, additions=(Addition("pun_note", "两个词谐音"),)),
+                        replace(original.records[2], text="", drop=True),
+                    ],
+                    reason=reason,
+                )
+                revised = engine.translate(source)
+                self.assertEqual(client.prompts, [])
+                self.assertEqual(revised.records[0], original.records[0])
+                self.assertEqual(revised.records[1].text, text)
+                self.assertEqual(revised.records[1].timestamp, original.records[1].timestamp)
+                self.assertEqual(revised.records[1].additions, (Addition("pun_note", "两个词谐音"),))
+                self.assertTrue(revised.records[2].drop)
+
+            retry_path(state, video).unlink()
+            restored = engine.translate(source)
+            self.assertEqual(restored.records, original.records)
+            self.assertEqual(client.prompts, [])
+            self.assertEqual(
+                {path: path.read_bytes() for path in (state / "chunks").rglob("*.jsonl")}, cache_bytes,
+            )
+
+    def test_corrections_apply_to_new_chunks_without_becoming_cached_base_text(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_name:
+            state = Path(temp_name) / "Show" / "S01"
+            ensure_layout(state)
+            video = Path("Show S01E01.mkv")
+            source = build_source_document(make_srt(["Hello", "World"]))
+            correction = validate_iris_cues([source.cues[1]], [IrisCue(2, "预先修正", False)], retry=True)
+            save_retry_patches(state, video, fingerprint=source.fingerprint, records=correction, reason="Fix cue 2")
+            client = FakeClient()
+            engine = TranslationEngine(
+                client=client, state_dir=state, video=video,
+                log_path=state / "logs" / "test.log", chunk_cues=1,
+            )
+            revised = engine.translate(source)
+            self.assertEqual([record.text for record in revised.records], ["译文1", "预先修正"])
+            self.assertEqual(len(client.prompts), 2)
+            retry_path(state, video).unlink()
+            client.prompts.clear()
+            restored = engine.translate(source)
+            self.assertEqual([record.text for record in restored.records], ["译文1", "译文2"])
+            self.assertEqual(client.prompts, [])
+
+    def test_unpatched_legacy_namespace_is_reused_with_new_corrections(self) -> None:
+        for profile in (DEFAULT_PROFILE, replace(DEFAULT_PROFILE, id="test-target", output_tag="test-target")):
+            for filename in ("chunk-001.jsonl", "chunk-001.g0123456789.jsonl"):
+                with self.subTest(profile=profile.id, filename=filename), tempfile.TemporaryDirectory() as temp_name:
+                    state = Path(temp_name) / "Show" / "S01"
+                    ensure_layout(state)
+                    video = Path("Show S01E01 [1080p].mkv")
+                    source = build_source_document(make_srt(["Hello", "World"]))
+                    original = validate_iris_cues(
+                        list(source.cues), [IrisCue(1, "保留原文", False), IrisCue(2, "原来第二句", False)],
+                        retry=False, profile=profile,
+                    )
+                    empty_patches = {
+                        "version": 2, "ruleset_version": RULESET_VERSION,
+                        "source_fingerprint": source.fingerprint, "profile": profile.id, "patches": [],
+                    }
+                    digest = hashlib.sha256(
+                        json.dumps(empty_patches, ensure_ascii=False, sort_keys=True).encode("utf-8")
+                    ).hexdigest()[:10]
+                    suffix = "" if profile.id == DEFAULT_PROFILE.id else f".l{profile.id}"
+                    legacy_dir = state / "chunks" / (
+                        f"{video.stem}.src-{source.fingerprint[:12]}.r{RULESET_VERSION}."
+                        f"c2.o{CONTEXT_CUES}.p{digest}{suffix}"
+                    )
+                    legacy_dir.mkdir()
+                    legacy = legacy_dir / filename
+                    legacy.write_text(serialize_translation_document(source.fingerprint, original, profile), encoding="utf-8")
+                    before = legacy.read_bytes()
+                    save_retry_patches(
+                        state, video, fingerprint=source.fingerprint,
+                        records=[replace(original[1], text="修正第二句")], reason="Fix cue 2", profile=profile,
+                    )
+                    client = FakeClient()
+                    run = TranslationEngine(
+                        client=client, state_dir=state, video=video,
+                        log_path=state / "logs" / "test.log", chunk_cues=2, profile=profile,
+                    ).translate(source)
+                    self.assertEqual(client.prompts, [])
+                    self.assertEqual([record.text for record in run.records], ["保留原文", "修正第二句"])
+                    self.assertEqual(legacy.read_bytes(), before)
+                    promoted = [path for path in (state / "chunks").glob("*/chunk-001.jsonl") if path.parent != legacy_dir]
+                    self.assertEqual(len(promoted), 1)
+                    self.assertEqual(promoted[0].read_bytes(), before)
+
+    def test_invalid_corrections_fail_before_model_calls(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_name:
+            state = Path(temp_name) / "Show" / "S01"
+            ensure_layout(state)
+            video = Path("Show S01E01.mkv")
+            source = build_source_document(make_srt(["Hello"]))
+            records = validate_iris_cues(list(source.cues), [IrisCue(1, "你好", False)], retry=False)
+            path = save_retry_patches(state, video, fingerprint=source.fingerprint, records=records, reason="Fix wording")
+            valid = read_json(path)
+            for changes in (
+                {"source_fingerprint": "another-source"},
+                {"profile": "another-profile"},
+                {"ruleset_version": "old-ruleset"},
+                {"patches": [{"id": 2, "text": "越界", "drop": False}]},
+                {"patches": [{"id": 1, "text": "", "drop": False}]},
+            ):
+                with self.subTest(changes=changes):
+                    write_json(path, {**valid, **changes})
+                    client = FakeClient()
+                    with self.assertRaises(WorkflowError):
+                        TranslationEngine(
+                            client=client, state_dir=state, video=video,
+                            log_path=state / "logs" / "test.log",
+                        ).translate(source)
+                    self.assertEqual(client.prompts, [])
+                    self.assertEqual(client.enrichment_calls, 0)
+
     def test_later_glossary_edit_preserves_completed_chunks_on_resume(self) -> None:
         class EditingClient(FakeClient):
             def translate(self, prompt: str, *, request_id: str) -> IrisResponse:
