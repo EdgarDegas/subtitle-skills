@@ -609,21 +609,24 @@ def manual_retry(
             previous=previous,
             profile=profile,
         )
-        response = client.translate(prompt, request_id=f"iris-manual-a{attempt:02d}")
-        previous = _iris_json(list(response.cues))
-        _candidate_ids_are_targets(list(response.glossary_candidates), target_ids)
-        record_feedback(
-            state_dir,
-            video,
-            list(response.glossary_candidates),
-            chunk=1,
-            chunks_total=1,
-            attempt=attempt,
-            request_kind="manual-retry",
-            profile=profile,
-        )
-        candidates.extend(response.glossary_candidates)
+        # A failed parse has no usable previous response. Keep the last parsed
+        # cues only when this attempt reaches response validation.
+        previous = None
         try:
+            response = client.translate(prompt, request_id=f"iris-manual-a{attempt:02d}")
+            previous = _iris_json(list(response.cues))
+            _candidate_ids_are_targets(list(response.glossary_candidates), target_ids)
+            record_feedback(
+                state_dir,
+                video,
+                list(response.glossary_candidates),
+                chunk=1,
+                chunks_total=1,
+                attempt=attempt,
+                request_kind="manual-retry",
+                profile=profile,
+            )
+            candidates.extend(response.glossary_candidates)
             validated = validate_iris_cues(
                 targets,
                 response.cues,
@@ -633,6 +636,10 @@ def manual_retry(
             break
         except WorkflowError as exc:
             last_error = exc
+            append_log(
+                log_path,
+                f"MANUAL RETRY ATTEMPT FAILED: attempt={attempt}/{MAX_TRANSLATION_ATTEMPTS}: {exc}",
+            )
     if validated is None:
         raise WorkflowError(
             f"manual retry failed after {MAX_TRANSLATION_ATTEMPTS} attempts: {last_error}"

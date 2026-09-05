@@ -7,7 +7,9 @@ import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
+from unittest.mock import patch
 
+from codex_subtitles.codex_client import CodexClient
 from codex_subtitles.config import CONTEXT_CUES, RULESET_VERSION
 from codex_subtitles.domain import Addition, GlossaryCandidate, IrisCue, IrisResponse
 from codex_subtitles.curation import ensure_episode_enrichment
@@ -98,6 +100,86 @@ class AtlasFailingClient(FakeClient):
 
 
 class WorkflowTests(unittest.TestCase):
+    def test_manual_retry_recovers_from_invalid_json_and_candidate_ids(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_name:
+            root = Path(temp_name)
+            state = root / "Show" / "S01"
+            ensure_layout(state)
+            video = Path("Show S01E01.mkv")
+            source = build_source_document(make_srt(["Hello", "Context only"]))
+            executable = root / "codex"
+            executable.touch()
+            client = CodexClient(
+                executable=str(executable), work_dir=root, log_path=state / "logs" / "test.log",
+            )
+            cue = {"id": 1, "text": "修正译文", "drop": False, "additions": [], "skip_checks": []}
+            bad_candidate = {
+                "source": "Acme", "aliases": ["Acme"], "target": "艾克米", "cue_ids": [2],
+            }
+            with patch.object(client, "enrich_glossary", return_value="No changes"), patch.object(
+                client, "_invoke", side_effect=[
+                    "{invalid JSON",
+                    json.dumps({"cues": [cue], "glossary_candidates": [bad_candidate]}),
+                    json.dumps({"cues": [cue], "glossary_candidates": []}),
+                ],
+            ) as invoke:
+                path = manual_retry(
+                    source, selector="1", reason="Fix wording", state_dir=state, video=video,
+                    client=client, log_path=client.log_path,
+                )
+            self.assertEqual(invoke.call_count, 3)
+            prompts = [call.args[0] for call in invoke.call_args_list]
+            self.assertIn("invalid Iris response JSON", prompts[1])
+            self.assertIn("unknown or context-only IDs: 2", prompts[2])
+            self.assertTrue(all("Fix wording" in prompt for prompt in prompts))
+            self.assertTrue(all(
+                [item["id"] for item in source_window(prompt) if item["role"] == "target"] == [1]
+                for prompt in prompts
+            ))
+            self.assertEqual([item["text"] for item in read_json(path)["patches"]], ["修正译文"])
+            self.assertEqual(client.log_path.read_text().count("MANUAL RETRY ATTEMPT FAILED"), 2)
+
+    def test_manual_retry_exhaustion_preserves_existing_corrections(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_name:
+            state = Path(temp_name) / "Show" / "S01"
+            ensure_layout(state)
+            video = Path("Show S01E01.mkv")
+            source = build_source_document(make_srt(["Hello"]))
+            original = validate_iris_cues(list(source.cues), [IrisCue(1, "已确认译文", False)], retry=True)
+            path = save_retry_patches(
+                state, video, fingerprint=source.fingerprint, records=original, reason="Earlier correction",
+            )
+            before = path.read_bytes()
+            client = FakeClient()
+            log = state / "logs" / "test.log"
+            with patch.object(client, "translate", side_effect=[
+                WorkflowError(f"malformed response {attempt}") for attempt in range(1, 4)
+            ]) as translate:
+                with self.assertRaisesRegex(WorkflowError, "failed after 3 attempts: malformed response 3"):
+                    manual_retry(
+                        source, selector="1", reason="Improve wording", state_dir=state, video=video,
+                        client=client, log_path=log,
+                    )
+            self.assertEqual(translate.call_count, 3)
+            self.assertEqual(path.read_bytes(), before)
+            self.assertEqual(log.read_text().count("MANUAL RETRY ATTEMPT FAILED"), 3)
+
+    def test_manual_retry_does_not_retry_interruptions_or_local_io_errors(self) -> None:
+        for failure in (KeyboardInterrupt(), OSError("cannot read response file")):
+            with self.subTest(failure=type(failure).__name__), tempfile.TemporaryDirectory() as temp_name:
+                state = Path(temp_name) / "Show" / "S01"
+                ensure_layout(state)
+                video = Path("Show S01E01.mkv")
+                client = FakeClient()
+                with patch.object(client, "translate", side_effect=failure) as translate:
+                    with self.assertRaises(type(failure)):
+                        manual_retry(
+                            build_source_document(make_srt(["Hello"])), selector="1", reason="Fix wording",
+                            state_dir=state, video=video, client=client, log_path=state / "logs" / "test.log",
+                        )
+                self.assertEqual(translate.call_count, 1)
+                self.assertFalse(retry_path(state, video).exists())
+
     def test_saved_corrections_change_output_without_retranslating_or_mutating_base(self) -> None:
         with tempfile.TemporaryDirectory() as temp_name:
             state = Path(temp_name) / "Show" / "S01"
