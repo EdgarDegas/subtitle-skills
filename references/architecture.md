@@ -48,13 +48,14 @@ Default core size is 50 target cues, with up to 10 context cues before and after
 
 For example, one request may contain context `41..50`, target `51..100`, and context `101..110`. The next request owns `101..150`. Only target records are accepted and merged.
 
-Cache keys include the source fingerprint, ruleset, target-language profile, model policy, chunk size, context size, retry-patch digest, and glossary digest. Cache contents also carry the full fingerprint, ruleset, and profile header. Missing profile fields in legacy documents mean the default `zh-hans` profile.
+Cache directories include the source fingerprint, ruleset, target-language profile, chunk size, context size, and retry-patch digest. Model policy changes require a ruleset update. Each validated chunk is stored as `chunk-NNN.jsonl`, independently of later glossary edits. Cache contents also carry the full fingerprint, ruleset, and profile header. Missing profile fields in legacy documents mean the default `zh-hans` profile. When no valid stable cache exists, try legacy `chunk-NNN.g<DIGEST>.jsonl` files newest first, revalidate their headers and cue IDs, and promote the first valid snapshot to the stable filename.
 
 Before Iris starts, run Atlas through the existing durable curation job mechanism.
 Atlas researches the full source and merges findings directly into the shared glossary;
 see [episode-enrichment.md](episode-enrichment.md). Iris receives the complete glossary,
-including background prose and notes, with the current filename. The complete glossary
-contributes to its cache digest. Atlas and Iris handle applicability and reveal timing
+including background prose and notes, with the current filename. Uncached chunks and
+explicit cue retries use the current glossary; previously validated chunks retain
+their accepted translations. Atlas and Iris handle applicability and reveal timing
 through their prompts; Python handles Markdown structure, backups and retry state.
 
 Persist validated Iris records before invoking post-chunk Atlas. Atlas directly edits the shared
@@ -65,7 +66,7 @@ enrichment. Store the candidates and episode fingerprint as a resumable job in
 `glossary-jobs/`. A failed edit is restored from its exact pre-edit backup and leaves
 the job pending; it never invalidates the already saved Iris chunk.
 
-Use `--chunks START`, `--chunks START-END`, or `--chunks START-` to process an explicit inclusive one-based range. The absolute chunk number remains the cache owner and progress identity, even when the run starts after chunk 1. Persist `completed_chunks` as a sorted episode-wide list and keep the current `active_chunk_range` separate. A range run emits only a preview for that range. Run once without `--chunks` after the ranges finish to assemble the full source-ordered records and output from valid caches; if a glossary digest changed, that final pass may refresh the affected chunk.
+Use `--chunks START`, `--chunks START-END`, or `--chunks START-` to process an explicit inclusive one-based range. The absolute chunk number remains the cache owner and progress identity, even when the run starts after chunk 1. Persist `completed_chunks` as a sorted episode-wide list and keep the current `active_chunk_range` separate. A range run emits only a preview for that range. Run once without `--chunks` after the ranges finish to assemble the full source-ordered records and output from valid caches. Glossary edits alone never cause this final pass to translate a completed chunk again; use an explicit cue retry when an accepted translation needs correction.
 
 ## Rendering
 

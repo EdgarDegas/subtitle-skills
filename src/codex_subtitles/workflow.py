@@ -388,14 +388,20 @@ class TranslationEngine:
             targets = source_cues[core_start:core_end]
             window_start = max(0, core_start - CONTEXT_CUES)
             window_end = min(len(source_cues), core_end + CONTEXT_CUES)
-            glossary = glossary_context(self.state_dir, self.video, self.profile)
-            glossary_digest = hashlib.sha256(glossary.encode("utf-8")).hexdigest()[:10]
-            cache = cache_dir / f"chunk-{chunk_index:03d}.g{glossary_digest}.jsonl"
+            # Completed chunks survive subsequent glossary edits. Only new Iris
+            # requests consume the latest glossary through _translate_chunk.
+            cache = cache_dir / f"chunk-{chunk_index:03d}.jsonl"
+            legacy_caches = sorted(
+                cache_dir.glob(f"{cache.stem}.g*.jsonl"),
+                key=lambda path: (path.stat().st_mtime_ns, path.name),
+                reverse=True,
+            )
+            cache_candidates = ([cache] if cache.is_file() else []) + legacy_caches
             records: list[TranslationCue] | None = None
-            if cache.is_file():
+            for cached_path in cache_candidates:
                 try:
                     _, cached = parse_translation_document(
-                        cache.read_text(encoding="utf-8"),
+                        cached_path.read_text(encoding="utf-8"),
                         expected_fingerprint=source.fingerprint,
                         profile=self.profile,
                     )
@@ -405,16 +411,24 @@ class TranslationEngine:
                         retry=True,
                         profile=self.profile,
                     )
+                except (OSError, UnicodeError, WorkflowError):
                     append_log(
                         self.log_path,
-                        f"CHUNK CACHE HIT: {chunk_index}/{len(ranges)} ruleset={RULESET_VERSION}",
+                        f"CHUNK CACHE INVALID: {chunk_index}/{len(ranges)} file={cached_path.name}",
                     )
-                except WorkflowError:
-                    records = None
-                    append_log(
-                        self.log_path,
-                        f"CHUNK CACHE INVALID: {chunk_index}/{len(ranges)}",
+                    continue
+                if cached_path != cache:
+                    # Promote the newest valid legacy snapshot without changing
+                    # its source, ruleset, profile, or retry-patch namespace.
+                    atomic_write(
+                        cache,
+                        serialize_translation_document(source.fingerprint, records, self.profile),
                     )
+                append_log(
+                    self.log_path,
+                    f"CHUNK CACHE HIT: {chunk_index}/{len(ranges)} ruleset={RULESET_VERSION}",
+                )
+                break
             if records is None:
                 records, candidates = self._translate_chunk(
                     source_cues,
@@ -461,22 +475,6 @@ class TranslationEngine:
                         request_id=request_id,
                         profile=self.profile,
                     )
-                    updated_glossary = glossary_context(self.state_dir, self.video, self.profile)
-                    updated_digest = hashlib.sha256(
-                        updated_glossary.encode("utf-8")
-                    ).hexdigest()[:10]
-                    updated_cache = (
-                        cache_dir / f"chunk-{chunk_index:03d}.g{updated_digest}.jsonl"
-                    )
-                    if updated_cache != cache:
-                        atomic_write(
-                            updated_cache,
-                            serialize_translation_document(
-                                source.fingerprint,
-                                records,
-                                self.profile,
-                            ),
-                        )
             else:
                 all_records.extend(records)
                 if progress_callback:

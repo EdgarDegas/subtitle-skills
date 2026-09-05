@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -9,7 +10,11 @@ from codex_subtitles.domain import GlossaryCandidate, IrisCue, IrisResponse
 from codex_subtitles.curation import ensure_episode_enrichment
 from codex_subtitles.errors import WorkflowError
 from codex_subtitles.glossary import ensure_glossary
-from codex_subtitles.protocol import build_source_document
+from codex_subtitles.protocol import (
+    build_source_document,
+    serialize_translation_document,
+    validate_iris_cues,
+)
 from codex_subtitles.workflow import TranslationEngine, manual_retry
 from codex_subtitles.workspace import ensure_layout, read_json
 
@@ -89,6 +94,87 @@ class AtlasFailingClient(FakeClient):
 
 
 class WorkflowTests(unittest.TestCase):
+    def test_later_glossary_edit_preserves_completed_chunks_on_resume(self) -> None:
+        class EditingClient(FakeClient):
+            def translate(self, prompt: str, *, request_id: str) -> IrisResponse:
+                response = super().translate(prompt, request_id=request_id)
+                if response.cues[0].id == 2:
+                    return IrisResponse(response.cues, (
+                        GlossaryCandidate("机构", "Acme", ("Acme",), "艾克米", "", (2,)),
+                    ))
+                return response
+
+            def edit_glossary(self, prompt: str, *, glossary: Path, request_id: str) -> str:
+                with glossary.open("a", encoding="utf-8") as handle:
+                    handle.write("\n## Background from chunk 2\nAcme is a company.\n")
+                return "Added company background"
+
+        with tempfile.TemporaryDirectory() as temp_name:
+            state = Path(temp_name) / "Show" / "S01"
+            ensure_layout(state)
+            video = Path("Show S01E01.mkv")
+            source = build_source_document(make_srt(["Hello", "Acme", "Goodbye"]))
+            first = EditingClient()
+            initial = TranslationEngine(
+                client=first, state_dir=state, video=video,
+                log_path=state / "logs" / "test.log", chunk_cues=1,
+            ).translate(source, chunk_range=(1, 2))
+            self.assertEqual(len(first.prompts), 2)
+
+            resumed = FakeClient()
+            complete = TranslationEngine(
+                client=resumed, state_dir=state, video=video,
+                log_path=state / "logs" / "test.log", chunk_cues=1,
+            ).translate(source)
+            self.assertEqual(len(resumed.prompts), 1)
+            self.assertEqual(
+                [cue["id"] for cue in source_window(resumed.prompts[0]) if cue["role"] == "target"],
+                [3],
+            )
+            self.assertIn("Acme is a company", resumed.prompts[0])
+            self.assertEqual(complete.records[:2], initial.records)
+
+            assembled = FakeClient()
+            again = TranslationEngine(
+                client=assembled, state_dir=state, video=video,
+                log_path=state / "logs" / "test.log", chunk_cues=1,
+            ).translate(source)
+            self.assertEqual(assembled.prompts, [])
+            self.assertEqual(again.records, complete.records)
+
+    def test_legacy_caches_reuse_latest_valid_records_and_promote_them(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_name:
+            state = Path(temp_name) / "Show" / "S01"
+            ensure_layout(state)
+            video = Path("Show S01E01.mkv")
+            source = build_source_document(make_srt(["Hello"]))
+            client = FakeClient()
+            engine = TranslationEngine(
+                client=client, state_dir=state, video=video, log_path=state / "logs" / "test.log",
+            )
+            engine.translate(source)
+            cache_dir = next((state / "chunks").iterdir())
+            for path in cache_dir.glob("chunk-001*.jsonl"):
+                path.unlink()
+            for ordinal, (text, fingerprint) in enumerate((
+                ("旧译文", source.fingerprint),
+                ("已确认译文", source.fingerprint),
+                ("其他来源", "different-source"),
+            ), start=1):
+                records = validate_iris_cues(
+                    list(source.cues), [IrisCue(1, text, False)], retry=False,
+                )
+                legacy = cache_dir / f"chunk-001.g{ordinal:010x}.jsonl"
+                legacy.write_text(serialize_translation_document(fingerprint, records), encoding="utf-8")
+                os.utime(legacy, ns=(ordinal * 1_000_000_000, ordinal * 1_000_000_000))
+            with ensure_glossary(state).open("a", encoding="utf-8") as handle:
+                handle.write("\nUpdated glossary after translation.\n")
+            client.prompts.clear()
+            run = engine.translate(source)
+            self.assertEqual(client.prompts, [])
+            self.assertEqual(run.records[0].text, "已确认译文")
+            self.assertTrue((cache_dir / "chunk-001.jsonl").is_file())
+
     def test_episodes_reuse_one_fact_and_unchanged_research_can_complete(self) -> None:
         with tempfile.TemporaryDirectory() as temp_name:
             state = Path(temp_name) / "Show" / "S01"
