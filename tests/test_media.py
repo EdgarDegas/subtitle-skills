@@ -20,7 +20,7 @@ class MediaTests(unittest.TestCase):
     def test_offline_explicit_video_needs_a_local_source(self):
         with tempfile.TemporaryDirectory() as temp:
             workspace = Path(temp) / "workspace"
-            video = Path(temp) / "absent" / "Show" / "S01" / "Show S01E01.mkv"
+            video = Path(temp) / "absent" / "Show" / "S01" / "Show S01E01 [1080p].mkv"
             with self.assertRaises(WorkflowError):
                 discover_videos([video], recursive=False, offline_workspace=workspace)
             source = workspace / "Show" / "S01" / "sources" / f"{video.stem}.stream-3.srt"
@@ -28,6 +28,18 @@ class MediaTests(unittest.TestCase):
             source.write_text(SRT)
             self.assertEqual(discover_videos([video], recursive=False, offline_workspace=workspace), [video.resolve()])
             self.assertFalse(video.exists())
+
+    def test_cached_source_matches_bracketed_video_names_literally(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            video = root / "Show S01E01 [1080p].mkv"
+            # This unrelated name matches the brackets when interpreted as a glob.
+            (root / "Show S01E01 1.stream-3.srt").write_text(SRT)
+            with self.assertRaises(WorkflowError):
+                cached_source(video, root)
+            source = root / f"{video.stem}.stream-3.srt"
+            source.write_text(SRT)
+            self.assertEqual(cached_source(video, root), source)
 
     def test_srt_processing_needs_no_media_installation(self):
         with tempfile.TemporaryDirectory() as temp:

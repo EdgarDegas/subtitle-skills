@@ -260,8 +260,9 @@ def cached_source(video: Path, sources: Path) -> Path:
     candidates = sorted(
         (
             path
-            for path in sources.glob(f"{video.stem}.*")
-            if path.is_file() and path.suffix.lower() in SUBTITLE_EXTENSIONS
+            for path in sources.glob("*")
+            if path.name.startswith(video.stem + ".")
+            and path.is_file() and path.suffix.lower() in SUBTITLE_EXTENSIONS
             and ".partial" not in path.name and path.stat().st_size > 0
         ),
         key=lambda path: path.stat().st_mtime_ns,
