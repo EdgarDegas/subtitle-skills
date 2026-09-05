@@ -469,7 +469,10 @@ def process_video(video: Path, options: RunOptions) -> str:
             )
             records = list(run.records)
             if not run.complete:
-                rendered = render_translation(records)
+                rendered = render_translation(
+                    records,
+                    first_source_id=(run.chunk_start - 1) * options.chunk_cues + 1,
+                )
                 preview = preview_path(
                     state_dir,
                     video,

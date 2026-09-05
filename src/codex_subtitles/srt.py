@@ -142,10 +142,16 @@ def shift_srt_timing(document: str, offset_ms: int) -> str:
 
 def render_translation(
     records: list[TranslationCue],
+    *,
+    first_source_id: int = 1,
 ) -> RenderResult:
+    """Render contiguous source IDs; previews may start later in the episode."""
     ordered = sorted(records, key=lambda record: record.id)
-    if [record.id for record in ordered] != list(range(1, len(ordered) + 1)):
-        raise WorkflowError("translation record IDs are not complete episode ordinals")
+    expected_ids = list(range(first_source_id, first_source_id + len(ordered)))
+    if first_source_id < 1 or [record.id for record in ordered] != expected_ids:
+        raise WorkflowError(
+            f"translation record IDs are not contiguous from source ID {first_source_id}"
+        )
     output: list[tuple[SrtCue, int, str]] = []
     dropped = 0
     addition_counts: dict[str, int] = {}

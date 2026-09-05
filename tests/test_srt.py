@@ -4,6 +4,7 @@ import unittest
 
 from codex_subtitles.config import TOP_POSITION_TAG
 from codex_subtitles.domain import Addition, TranslationCue
+from codex_subtitles.errors import WorkflowError
 from codex_subtitles.srt import (
     clean_source_srt,
     normalize_text,
@@ -74,6 +75,38 @@ class SrtTests(unittest.TestCase):
         earlier = parse_srt(shift_srt_timing(document, -1_500))
         self.assertEqual(earlier[0].timestamp, "00:00:00,000 --> 00:00:00,500")
         self.assertEqual(earlier[1].timestamp, "00:00:01,500 --> 00:00:02,500")
+
+    def test_preview_preserves_source_ids_with_drops_and_additions(self) -> None:
+        records = [
+            TranslationCue(51, "51", "00:00:01,000 --> 00:00:02,000", "Hello", "你好", False),
+            TranslationCue(52, "52", "00:00:03,000 --> 00:00:04,000", "[LAUGHS]", "", True),
+            TranslationCue(
+                53, "53", "00:00:05,000 --> 00:00:06,000", "Finnish?", "芬兰语？", False,
+                additions=(Addition("pun_note", "“芬兰语”与“完成”同音"),),
+            ),
+        ]
+        rendered = render_translation(records, first_source_id=51)
+        self.assertEqual([cue.number for cue in parse_srt(rendered.document)], ["1", "2", "3"])
+        self.assertEqual(rendered.dropped_cues, 1)
+        self.assertEqual(
+            [(entry.output_number, entry.source_id, entry.role) for entry in rendered.mapping],
+            [(1, 51, "main"), (2, 53, "pun_note"), (3, 53, "main")],
+        )
+        self.assertEqual([record.id for record in records], [51, 52, 53])
+        with self.assertRaises(WorkflowError):
+            render_translation(records)
+
+    def test_preview_rejects_missing_duplicate_and_unexpected_source_ids(self) -> None:
+        for ids in ((51, 53), (51, 51), (52, 53)):
+            with self.subTest(ids=ids):
+                records = [
+                    TranslationCue(
+                        cue_id, str(cue_id), "00:00:01,000 --> 00:00:02,000", "Hello", "你好", False
+                    )
+                    for cue_id in ids
+                ]
+                with self.assertRaises(WorkflowError):
+                    render_translation(records, first_source_id=51)
 
 
 if __name__ == "__main__":
