@@ -185,13 +185,13 @@ class ProtocolTests(unittest.TestCase):
             )
         self.assertEqual(invalid.exception.check, "cue deletion")
 
-    def test_multi_check_appeal(self) -> None:
+    def test_speaker_label_appeal_is_retry_only(self) -> None:
         dialogue = list(build_source_document(make_srt(["MAN: Heh, Chào cô"])).cues)
         appealed = IrisCue(
             1,
             "MAN: 哈哈 Chào cô",
             False,
-            skip_checks=("speaker label", "terminology"),
+            skip_checks=("speaker label",),
         )
         with self.assertRaises(ValidationIssue) as initial:
             validate_iris_cues(dialogue, [appealed], retry=False)
@@ -199,8 +199,36 @@ class ProtocolTests(unittest.TestCase):
         result = validate_iris_cues(dialogue, [appealed], retry=True)
         self.assertEqual(
             result[0].skip_checks,
-            ("speaker label", "terminology"),
+            ("speaker label",),
         )
+
+    def test_retired_appeals_are_rejected_in_new_responses(self) -> None:
+        cues = list(build_source_document(make_srt(["Hello"])).cues)
+        for check in ("pun", "reveal order", "terminology", "structure", "unknown"):
+            with self.subTest(check=check), self.assertRaises(ValidationIssue) as invalid:
+                validate_iris_cues(
+                    cues, [IrisCue(1, "你好", False, skip_checks=(check,))], retry=True,
+                )
+            self.assertEqual(invalid.exception.check, "appeal format")
+
+    def test_saved_translation_discards_only_retired_appeals(self) -> None:
+        source = build_source_document(make_srt(["MAN: Hello"]))
+        records = validate_iris_cues(
+            list(source.cues),
+            [IrisCue(1, "MAN: 你好", False, skip_checks=("speaker label",))],
+            retry=True,
+        )
+        legacy = replace(
+            records[0], skip_checks=("pun", " REVEAL ORDER ", "speaker label", "terminology"),
+        )
+        document = serialize_translation_document(
+            source.fingerprint, [legacy], retry_fingerprint="saved-corrections",
+        )
+        _, loaded = parse_translation_document(
+            document, expected_fingerprint=source.fingerprint,
+            expected_retry_fingerprint="saved-corrections",
+        )
+        self.assertEqual(loaded, records)
 
     def test_foreign_text_does_not_trigger_validation_or_require_an_appeal(self) -> None:
         texts = ["Hello world", "Los Angeles", "café", "你好 Hello world"]
@@ -224,7 +252,7 @@ class ProtocolTests(unittest.TestCase):
         schema = json.loads(TRANSLATION_SCHEMA.read_text(encoding="utf-8"))
         names = schema["properties"]["cues"]["items"]["properties"]["skip_checks"]["items"]["enum"]
         self.assertEqual(set(names), SKIPPABLE_CHECKS)
-        self.assertNotIn("foreign text", names)
+        self.assertEqual(names, ["speaker label"])
 
     def test_laughter_wording_is_not_mechanically_rejected_or_removed(self) -> None:
         cues = list(build_source_document(make_srt(["Heh", "Say laughter"])).cues)

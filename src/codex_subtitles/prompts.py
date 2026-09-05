@@ -52,7 +52,7 @@ def retry_section(reason: str, previous: str | None) -> str:
 THIS REQUEST IS A RETRY.
 Reason: {reason}
 
-Correct the cited problem while preserving good wording. If the cited check is a false positive, keep the wording and list the check in that target record's `skip_checks`. Several checks may be listed together.
+Correct the cited problem while preserving good wording. If the speaker-label detector is a false positive, keep the wording and return `skip_checks: ["speaker label"]` for that target record.
 Appealable names: {", ".join(sorted(SKIPPABLE_CHECKS))}.
 Never appeal cue IDs, missing or duplicate records, unsafe deletion, empty kept text, schema errors, or addition structure. Keep `skip_checks` empty for unaffected records.
 

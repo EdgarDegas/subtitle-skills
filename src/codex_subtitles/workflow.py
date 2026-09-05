@@ -20,6 +20,7 @@ from .domain import (
     SourceDocument,
     TranslationCue,
     TranslationRun,
+    load_saved_skip_checks,
 )
 from .errors import ValidationIssue, WorkflowError
 from .curation import enqueue_curation, ensure_episode_enrichment, retry_pending
@@ -171,7 +172,7 @@ def _patches_by_id(document: dict[str, object]) -> dict[int, IrisCue]:
             str(item.get("text") or ""),
             bool(item.get("drop")),
             tuple(Addition.from_dict(addition) for addition in additions),
-            tuple(str(check) for check in skips),
+            load_saved_skip_checks(skips),
         )
     return patches
 

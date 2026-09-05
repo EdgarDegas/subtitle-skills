@@ -6,12 +6,9 @@ Read this reference when a cue or chunk fails, a user requests a direct retry, o
 
 Every failure has one stable short name.
 
-Appealable translation checks:
+The only appealable translation check is:
 
-- `pun`
-- `reveal order`
 - `speaker label`
-- `terminology`
 
 Non-appealable protocol checks:
 
@@ -48,7 +45,9 @@ If a run stops at a chunk boundary or exhausts that chunk's attempts, preserve e
 
 ## Appeals
 
-Only a retry response may list `skip_checks`. One target can appeal several named translation checks. The script validates every requested name and persists accepted appeals in the translation record. Iris may retain its original wording when a detector is a false positive.
+Only a retry response may use `skip_checks: ["speaker label"]`. Iris may retain its original wording when the speaker-label detector is a false positive. Otherwise keep `skip_checks` empty. The script validates the name and persists accepted appeals in the translation record.
+
+Terminology, information-reveal order, and semantic pun handling remain Iris prompt responsibilities. Old records and saved corrections may contain the retired names `pun`, `reveal order`, and `terminology`; discard those no-op names on load without changing source or correction fingerprints. This protocol cleanup preserves the existing ruleset and valid chunk caches.
 
 Never accept an appeal for a protocol check. Additions and appeals are separate fields; an appeal does not change source identity or output timing.
 

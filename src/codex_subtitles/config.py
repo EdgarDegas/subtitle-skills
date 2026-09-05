@@ -25,14 +25,7 @@ TRANSLATION_SCHEMA = PACKAGE_DIR / "schemas" / "translation_output.schema.json"
 VIDEO_EXTENSIONS = frozenset({".avi", ".m4v", ".mkv", ".mov", ".mp4", ".webm"})
 SUBTITLE_EXTENSIONS = frozenset({".ass", ".srt", ".ssa", ".vtt"})
 
-SKIPPABLE_CHECKS = frozenset(
-    {
-        "pun",
-        "reveal order",
-        "speaker label",
-        "terminology",
-    }
-)
+SKIPPABLE_CHECKS = frozenset({"speaker label"})
 PROTOCOL_CHECKS = frozenset(
     {
         "appeal format",

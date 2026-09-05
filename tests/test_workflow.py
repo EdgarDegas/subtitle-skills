@@ -241,6 +241,38 @@ class WorkflowTests(unittest.TestCase):
             self.assertEqual([record.text for record in restored.records], ["译文1", "译文2"])
             self.assertEqual(client.prompts, [])
 
+    def test_retired_appeals_in_caches_and_corrections_do_not_retranslate(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_name:
+            state = Path(temp_name) / "Show" / "S01"
+            ensure_layout(state)
+            video = Path("Show S01E01.mkv")
+            source = build_source_document(make_srt(["MAN: Hello", "World"]))
+            client = FakeClient()
+            engine = TranslationEngine(
+                client=client, state_dir=state, video=video,
+                log_path=state / "logs" / "test.log", chunk_cues=2,
+            )
+            original = engine.translate(source)
+            retired = ("pun", "reveal order", "terminology")
+            legacy = [
+                replace(original.records[0], text="MAN: 你好", skip_checks=retired + ("speaker label",)),
+                replace(original.records[1], skip_checks=retired),
+            ]
+            cache = next((state / "chunks").rglob("chunk-001.jsonl"))
+            cache.write_text(serialize_translation_document(source.fingerprint, legacy), encoding="utf-8")
+            correction = save_retry_patches(
+                state, video, fingerprint=source.fingerprint,
+                records=[replace(legacy[1], text="修正译文")], reason="Legacy correction",
+            )
+            before = {path: path.read_bytes() for path in (cache, correction)}
+            client.prompts.clear()
+            run = engine.translate(source)
+            self.assertEqual(client.prompts, [])
+            self.assertEqual(client.enrichment_calls, 1)
+            self.assertEqual([record.text for record in run.records], ["MAN: 你好", "修正译文"])
+            self.assertEqual([record.skip_checks for record in run.records], [("speaker label",), ()])
+            self.assertEqual({path: path.read_bytes() for path in before}, before)
+
     def test_unpatched_legacy_namespace_is_reused_with_new_corrections(self) -> None:
         for profile in (DEFAULT_PROFILE, replace(DEFAULT_PROFILE, id="test-target", output_tag="test-target")):
             for filename in ("chunk-001.jsonl", "chunk-001.g0123456789.jsonl"):

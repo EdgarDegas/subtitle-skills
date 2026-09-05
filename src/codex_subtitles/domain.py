@@ -60,6 +60,14 @@ class IrisCue:
     skip_checks: tuple[str, ...] = ()
 
 
+def load_saved_skip_checks(values: list[object]) -> tuple[str, ...]:
+    """Discard retired no-op appeals only when reading durable records."""
+    retired = {"pun", "reveal order", "terminology"}
+    return tuple(
+        check for check in map(str, values) if check.strip().lower() not in retired
+    )
+
+
 @dataclass(frozen=True)
 class TranslationCue:
     id: int
@@ -103,7 +111,7 @@ class TranslationCue:
             text=str(value["text"]),
             drop=bool(value["drop"]),
             additions=tuple(Addition.from_dict(item) for item in raw_additions),
-            skip_checks=tuple(str(item) for item in raw_skips),
+            skip_checks=load_saved_skip_checks(raw_skips),
         )
 
 
